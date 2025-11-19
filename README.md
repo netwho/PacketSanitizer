@@ -25,7 +25,7 @@ The original file is preserved, and a sanitized copy is created with the `_sanit
 
 The PacketSanitizer plugin appears in Wireshark's Tools menu:
 
-![Wireshark Menu](examples/PacketSanitizer-Menu.png)
+![Wireshark Menu](Sanitize.png)
 
 ### Sanitization Process
 
