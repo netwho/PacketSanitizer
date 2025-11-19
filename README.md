@@ -1,5 +1,11 @@
 # PacketSanitizer
 
+![Version](https://img.shields.io/badge/version-0.0.2-blue.svg)
+![License](https://img.shields.io/badge/license-GPL%20v2-green.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
+![Python](https://img.shields.io/badge/python-3.6%2B-blue.svg)
+![Wireshark](https://img.shields.io/badge/wireshark-3.0%2B-orange.svg)
+
 A Wireshark Lua plugin for sanitizing PCAP/PCAPNG files for safe sharing outside organizations.
 
 ## Description
@@ -8,10 +14,43 @@ PacketSanitizer is a Wireshark plugin that sanitizes packet capture files by:
 - **Anonymizing IP addresses** - Replaces all IPs with anonymized versions while maintaining conversation flows
 - **Anonymizing MAC addresses** - Replaces all MAC addresses with anonymized versions
 - **Removing DHCP data** - Completely removes DHCP layer information
-- **Sanitizing payloads** - Replaces UDP and TCP payload data with a recognizable pattern (0xBADCODE) while preserving packet size
+- **Sanitizing payloads** - Replaces UDP and TCP payload data with a recognizable pattern (0x5341 = "SA" for "Sanitized") while preserving packet size
 - **Preserving structure** - Maintains full packet structure and size for analysis while removing sensitive data
 
 The original file is preserved, and a sanitized copy is created with the `_sanitized` suffix.
+
+## Screenshots
+
+### Wireshark Menu Integration
+
+The PacketSanitizer plugin appears in Wireshark's Tools menu:
+
+![Wireshark Menu](examples/PacketSanitizer-Menu.png)
+
+### Sanitization Process
+
+When you select "Sanitize PCAP(NG)" from the Tools menu, the plugin will:
+1. Detect the current capture file (or prompt you to select one)
+2. Process all packets to sanitize sensitive data
+3. Display a success message with an option to open the sanitized file
+
+![Success Dialog](examples/PacketSanitizer-Success.png)
+
+### Before and After Comparison
+
+**Before Sanitization:**
+- Original IP addresses visible
+- Original MAC addresses visible
+- Payload data contains real information
+
+**After Sanitization:**
+- IP addresses anonymized (maintaining conversation flows)
+- MAC addresses anonymized
+- Payload data replaced with "SA" pattern (0x5341)
+- DHCP information removed
+- IGMP packets left untouched
+
+![Before/After Comparison](examples/PacketSanitizer-Comparison.png)
 
 ## Installation
 
@@ -22,6 +61,12 @@ The original file is preserved, and a sanitized copy is created with the `_sanit
    ```bash
    pip3 install scapy
    ```
+   
+   **macOS Quick Install (if you get "externally-managed-environment" error):**
+   ```bash
+   pip3 install --break-system-packages scapy
+   ```
+   
    Or install from requirements:
    ```bash
    pip3 install -r requirements.txt
@@ -80,7 +125,8 @@ python3 sanitize_packets.py input.pcap output_sanitized.pcap
 - The same original MAC always maps to the same anonymized MAC (maintains device identity)
 
 ### Payload Sanitization
-- TCP and UDP payloads are replaced with a sanitized pattern (0xBADCODE: `0x0B 0xAD 0xC0 0xDE`)
+- TCP and UDP payloads are replaced with a sanitized pattern (0x5341: `0x53 0x41` = "SA" for "Sanitized")
+- Uses printable ASCII characters (0x20-0x7E range) for better readability
 - Original packet size is preserved (pattern is repeated to match original payload length)
 - Full packet structure is maintained, including headers and payload space
 - Packet timing and structure are preserved
@@ -126,7 +172,9 @@ PacketSanitizer/
 
 ## License
 
-[Add license information here]
+This project is licensed under the GNU General Public License v2 (GPL v2).
+
+See [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
