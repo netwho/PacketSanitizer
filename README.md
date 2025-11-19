@@ -50,8 +50,6 @@ When you select "Sanitize PCAP(NG)" from the Tools menu, the plugin will:
 - DHCP information removed
 - IGMP packets left untouched
 
-![Before/After Comparison](examples/PacketSanitizer-Comparison.png)
-
 ## Installation
 
 ### Prerequisites
