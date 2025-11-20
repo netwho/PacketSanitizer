@@ -22,6 +22,28 @@ if set_plugin_info then
     })
 end
 
+-- Helper function to detect platform
+local function is_windows()
+    return package.config:sub(1,1) == "\\"
+end
+
+-- Helper function to detect macOS
+local function is_macos()
+    if is_windows() then
+        return false
+    end
+    -- Check for macOS-specific commands or paths
+    local handle = io.popen("uname -s 2>/dev/null")
+    if handle then
+        local result = handle:read("*a")
+        handle:close()
+        if result and result:match("Darwin") then
+            return true
+        end
+    end
+    return false
+end
+
 -- Helper function to show messages
 local function show_message(title, message)
     -- Use TextWindow.new() which is the standard Wireshark Lua API
@@ -30,25 +52,31 @@ local function show_message(title, message)
     tw:set_atclose(function() end)  -- Keep window open until user closes it
 end
 
--- Function to sanitize the current capture file
--- mode: "all_payload", "cleartext_payload", or "payload_and_addresses"
-local function sanitize_capture(mode)
+-- Function to show file dialog (platform-specific)
+local function show_file_dialog()
     local file_path = nil
     
-    -- Try to get file path from CaptureInfo (may not be available in menu context)
-    if CaptureInfo and CaptureInfo.file then
-        file_path = tostring(CaptureInfo.file)
-    end
-    
-    -- If no file path from CaptureInfo, use macOS file dialog
-    if not file_path or file_path == "" then
-        -- Use osascript with a simpler approach (no System Events needed)
-        -- Create a temporary AppleScript file
+    if is_windows() then
+        -- Windows: Use PowerShell file dialog
+        local ps_script = '[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = "PCAP files (*.pcap, *.pcapng)|*.pcap;*.pcapng|All files (*.*)|*.*"; $dialog.Title = "Select PCAP/PCAPNG file to sanitize"; if ($dialog.ShowDialog() -eq "OK") { Write-Output $dialog.FileName }'
+        local ps_cmd = 'powershell -NoProfile -Command "' .. ps_script:gsub('"', '\\"') .. '"'
+        local handle = io.popen(ps_cmd)
+        if handle then
+            local result = handle:read("*a")
+            handle:close()
+            if result and result ~= "" then
+                result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                if result:match("^[A-Za-z]:") or result:match("^\\\\") then  -- Windows path
+                    file_path = result
+                end
+            end
+        end
+    elseif is_macos() then
+        -- macOS: Use osascript
         local tmp_dir = os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
         local tmp_script = tmp_dir .. "/packetsanitizer_" .. os.time() .. ".scpt"
-        local osascript_debug = nil  -- Store debug info outside the block
         
-        -- Write AppleScript to temp file (simpler version without System Events)
+        -- Write AppleScript to temp file
         local script_content = 'try\n' ..
                               '  set theFile to choose file with prompt "Select PCAP/PCAPNG file to sanitize" of type {"pcap", "pcapng"} default location (path to desktop folder)\n' ..
                               '  return POSIX path of theFile\n' ..
@@ -68,7 +96,6 @@ local function sanitize_capture(mode)
             
             if handle then
                 raw_result = handle:read("*a")
-                osascript_debug = raw_result  -- Store for debugging
                 handle:close()
             end
             
@@ -77,43 +104,113 @@ local function sanitize_capture(mode)
             
             -- Process the result
             if raw_result and raw_result ~= "" then
-                -- Clean up the result - remove whitespace
                 local result = raw_result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                
-                -- Check if it's a valid POSIX path (starts with /)
-                if result:match("^/") then
-                    -- Check it's not an error message (case-insensitive)
+                if result:match("^/") then  -- POSIX path
                     local lower_result = string.lower(result)
                     if not lower_result:match("error") and 
                        not lower_result:match("cancelled") and 
                        not lower_result:match("timeout") and
                        not lower_result:match("user cancelled") and
-                       not lower_result:match("execution error") and
-                       not lower_result:match("system events") then
+                       not lower_result:match("execution error") then
                         file_path = result
                     end
                 end
             end
         end
+    else
+        -- Linux: Try zenity, kdialog, or yad
+        local dialog_cmd = nil
+        local dialog_test = nil
         
-        -- If file dialog was cancelled or failed, show instructions with debug info
-        if not file_path or file_path == "" then
-            local debug_msg = "File selection dialog result couldn't be parsed.\n\n"
-            
-            -- Show what osascript actually returned
-            if osascript_debug and osascript_debug ~= "" then
-                local clean_debug = osascript_debug:gsub("\n", "\\n"):gsub("\r", "\\r"):sub(1, 200)
-                debug_msg = debug_msg .. "Debug info - osascript returned:\n" .. clean_debug .. "\n\n"
-            else
-                debug_msg = debug_msg .. "Debug info - osascript returned nothing (empty or cancelled).\n\n"
+        -- Try zenity (GNOME)
+        dialog_test = io.popen("which zenity 2>/dev/null")
+        if dialog_test then
+            local zenity_path = dialog_test:read("*a")
+            dialog_test:close()
+            if zenity_path and zenity_path ~= "" then
+                zenity_path = zenity_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                dialog_cmd = '"' .. zenity_path .. '" --file-selection --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" --file-filter="All files | *.*" 2>/dev/null'
             end
+        end
+        
+        -- Try kdialog (KDE) if zenity not found
+        if not dialog_cmd then
+            dialog_test = io.popen("which kdialog 2>/dev/null")
+            if dialog_test then
+                local kdialog_path = dialog_test:read("*a")
+                dialog_test:close()
+                if kdialog_path and kdialog_path ~= "" then
+                    kdialog_path = kdialog_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    dialog_cmd = '"' .. kdialog_path .. '" --getopenfilename ~ "PCAP files (*.pcap *.pcapng)" 2>/dev/null'
+                end
+            end
+        end
+        
+        -- Try yad if neither zenity nor kdialog found
+        if not dialog_cmd then
+            dialog_test = io.popen("which yad 2>/dev/null")
+            if dialog_test then
+                local yad_path = dialog_test:read("*a")
+                dialog_test:close()
+                if yad_path and yad_path ~= "" then
+                    yad_path = yad_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    dialog_cmd = '"' .. yad_path .. '" --file --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" 2>/dev/null'
+                end
+            end
+        end
+        
+        -- Execute the dialog command if found
+        if dialog_cmd then
+            local handle = io.popen(dialog_cmd)
+            if handle then
+                local result = handle:read("*a")
+                handle:close()
+                if result and result ~= "" then
+                    result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    if result:match("^/") and not result:match("^%s*$") then  -- Valid POSIX path
+                        file_path = result
+                    end
+                end
+            end
+        end
+    end
+    
+    return file_path
+end
+
+-- Function to sanitize the current capture file
+-- mode: "all_payload", "cleartext_payload", or "payload_and_addresses"
+local function sanitize_capture(mode)
+    local file_path = nil
+    
+    -- Try to get file path from CaptureInfo (may not be available in menu context)
+    if CaptureInfo and CaptureInfo.file then
+        file_path = tostring(CaptureInfo.file)
+    end
+    
+    -- If no file path from CaptureInfo, use platform-specific file dialog
+    if not file_path or file_path == "" then
+        file_path = show_file_dialog()
+        
+        -- If file dialog was cancelled or failed, show instructions
+        if not file_path or file_path == "" then
+            local debug_msg = "File selection dialog was cancelled or unavailable.\n\n"
             
-            debug_msg = debug_msg .. "You can sanitize files using the command line:\n\n" ..
-                "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
-                "  <input_file> <output_file>\n\n" ..
-                "Example:\n" ..
-                "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
-                "  ~/Downloads/capture.pcap ~/Downloads/capture_sanitized.pcap"
+            if is_windows() then
+                debug_msg = debug_msg .. "You can sanitize files using the command line:\n\n" ..
+                    "python \"%APPDATA%\\Wireshark\\plugins\\PacketSanitizer\\sanitize_packets.py\" ^\n" ..
+                    "  <mode> <input_file> <output_file>\n\n" ..
+                    "Example:\n" ..
+                    "python \"%APPDATA%\\Wireshark\\plugins\\PacketSanitizer\\sanitize_packets.py\" ^\n" ..
+                    "  payload_and_addresses C:\\Users\\YourName\\Downloads\\capture.pcap C:\\Users\\YourName\\Downloads\\capture_sanitized.pcap"
+            else
+                debug_msg = debug_msg .. "You can sanitize files using the command line:\n\n" ..
+                    "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
+                    "  <mode> <input_file> <output_file>\n\n" ..
+                    "Example:\n" ..
+                    "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
+                    "  payload_and_addresses ~/Downloads/capture.pcap ~/Downloads/capture_sanitized.pcap"
+            end
             
             show_message("PacketSanitizer - File Selection", debug_msg)
             return
@@ -132,7 +229,26 @@ local function sanitize_capture(mode)
     file:close()
     
     -- Check if Python script exists
-    local script_dir = debug.getinfo(1, "S").source:match("@(.*/)")
+    -- Get the directory where this Lua script is located
+    local script_source = debug.getinfo(1, "S").source:match("@(.*)")
+    local script_dir = script_source
+    
+    -- Extract directory path (remove filename)
+    if is_windows() then
+        -- Windows: remove filename and normalize to backslashes
+        script_dir = script_dir:gsub("/", "\\")
+        script_dir = script_dir:match("^(.*\\)") or script_dir
+        if not script_dir:match("\\$") then
+            script_dir = script_dir .. "\\"
+        end
+    else
+        -- Unix-like: remove filename and normalize to forward slashes
+        script_dir = script_dir:gsub("\\", "/")
+        script_dir = script_dir:match("^(.*/)") or script_dir
+        if not script_dir:match("/$") then
+            script_dir = script_dir .. "/"
+        end
+    end
     local python_script = script_dir .. "sanitize_packets.py"
     
     -- Check if file exists (Lua file check)
@@ -156,56 +272,131 @@ local function sanitize_capture(mode)
     end
     local output_file = file_path:gsub("%.pcapng?$", "") .. suffix .. ".pcap"
     
-    -- Find the correct Python 3 executable
-    -- Try multiple methods to find python3 with scapy
+    -- Find the correct Python 3 executable (platform-specific)
     local python_cmd = nil
     
-    -- Method 1: Try to find python3 in PATH
-    local python_test = io.popen('which python3 2>/dev/null')
-    if python_test then
-        local python_path = python_test:read("*a")
-        python_test:close()
-        if python_path and python_path ~= "" then
-            python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-            -- Verify it can import scapy
-            local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
-            if scapy_test then
-                local scapy_result = scapy_test:read("*a")
-                scapy_test:close()
-                if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
-                    python_cmd = python_path
-                end
-            end
-        end
-    end
-    
-    -- Method 2: Try common Python locations
-    if not python_cmd then
-        local common_paths = {
-            "/usr/local/bin/python3",
-            "/opt/homebrew/bin/python3",
-            "/usr/bin/python3"
-        }
-        for _, path in ipairs(common_paths) do
-            local test_file = io.open(path, "r")
-            if test_file then
-                test_file:close()
-                local scapy_test = io.popen('"' .. path .. '" -c "import scapy" 2>&1')
+    if is_windows() then
+        -- Windows: Try 'where python' or 'where python3'
+        local python_test = io.popen('where python 2>nul')
+        if python_test then
+            local python_path = python_test:read("*a")
+            python_test:close()
+            if python_path and python_path ~= "" then
+                python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                -- Verify it can import scapy
+                local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
                 if scapy_test then
                     local scapy_result = scapy_test:read("*a")
                     scapy_test:close()
                     if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
-                        python_cmd = path
-                        break
+                        python_cmd = python_path
                     end
                 end
             end
         end
-    end
-    
-    -- Fallback to python3 if nothing found
-    if not python_cmd then
-        python_cmd = "python3"
+        
+        -- Try python3 on Windows
+        if not python_cmd then
+            python_test = io.popen('where python3 2>nul')
+            if python_test then
+                local python_path = python_test:read("*a")
+                python_test:close()
+                if python_path and python_path ~= "" then
+                    python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
+                    if scapy_test then
+                        local scapy_result = scapy_test:read("*a")
+                        scapy_test:close()
+                        if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
+                            python_cmd = python_path
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Try common Windows Python locations
+        if not python_cmd then
+            local common_paths = {
+                os.getenv("LOCALAPPDATA") .. "\\Programs\\Python\\Python3*\\python.exe",
+                os.getenv("ProgramFiles") .. "\\Python3*\\python.exe",
+                "C:\\Python3*\\python.exe",
+                "C:\\Python*\\python.exe"
+            }
+            for _, path_pattern in ipairs(common_paths) do
+                -- Note: Lua doesn't support glob, so we check specific versions
+                for version = 12, 6, -1 do
+                    local path = path_pattern:gsub("%*", tostring(version))
+                    local test_file = io.open(path, "r")
+                    if test_file then
+                        test_file:close()
+                        local scapy_test = io.popen('"' .. path .. '" -c "import scapy" 2>&1')
+                        if scapy_test then
+                            local scapy_result = scapy_test:read("*a")
+                            scapy_test:close()
+                            if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
+                                python_cmd = path
+                                break
+                            end
+                        end
+                    end
+                end
+                if python_cmd then break end
+            end
+        end
+        
+        -- Fallback to python on Windows
+        if not python_cmd then
+            python_cmd = "python"
+        end
+    else
+        -- Unix-like (macOS/Linux): Try 'which python3'
+        local python_test = io.popen('which python3 2>/dev/null')
+        if python_test then
+            local python_path = python_test:read("*a")
+            python_test:close()
+            if python_path and python_path ~= "" then
+                python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                -- Verify it can import scapy
+                local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
+                if scapy_test then
+                    local scapy_result = scapy_test:read("*a")
+                    scapy_test:close()
+                    if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
+                        python_cmd = python_path
+                    end
+                end
+            end
+        end
+        
+        -- Try common Unix Python locations
+        if not python_cmd then
+            local common_paths = {
+                "/usr/local/bin/python3",
+                "/opt/homebrew/bin/python3",
+                "/usr/bin/python3"
+            }
+            for _, path in ipairs(common_paths) do
+                local test_file = io.open(path, "r")
+                if test_file then
+                    test_file:close()
+                    local scapy_test = io.popen('"' .. path .. '" -c "import scapy" 2>&1')
+                    if scapy_test then
+                        local scapy_result = scapy_test:read("*a")
+                        scapy_test:close()
+                        if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
+                            python_cmd = path
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Fallback to python3 on Unix
+        if not python_cmd then
+            python_cmd = "python3"
+        end
     end
     
     -- Call Python script and capture output
