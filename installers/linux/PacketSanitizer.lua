@@ -129,8 +129,9 @@ local function show_file_dialog()
             dialog_test:close()
             if zenity_path and zenity_path ~= "" then
                 zenity_path = zenity_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                -- zenity returns empty string on cancel, so we need to capture both stdout and stderr
-                dialog_cmd = zenity_path .. " --file-selection --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' --file-filter='All files | *.*' 2>&1"
+                -- zenity returns file path on selection, empty string on cancel
+                -- Use --separator to ensure single line output
+                dialog_cmd = zenity_path .. " --file-selection --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' --file-filter='All files | *.*' 2>/dev/null"
             end
         end
         
@@ -142,8 +143,8 @@ local function show_file_dialog()
                 dialog_test:close()
                 if kdialog_path and kdialog_path ~= "" then
                     kdialog_path = kdialog_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    -- kdialog returns empty string on cancel
-                    dialog_cmd = kdialog_path .. " --getopenfilename $HOME 'PCAP files (*.pcap *.pcapng)' 2>&1"
+                    -- kdialog returns file path on selection, empty string on cancel
+                    dialog_cmd = kdialog_path .. " --getopenfilename $HOME 'PCAP files (*.pcap *.pcapng)' 2>/dev/null"
                 end
             end
         end
@@ -156,7 +157,8 @@ local function show_file_dialog()
                 dialog_test:close()
                 if yad_path and yad_path ~= "" then
                     yad_path = yad_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    dialog_cmd = yad_path .. " --file --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' 2>&1"
+                    -- yad returns file path on selection, empty string on cancel
+                    dialog_cmd = yad_path .. " --file --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' 2>/dev/null"
                 end
             end
         end
@@ -165,15 +167,24 @@ local function show_file_dialog()
         if dialog_cmd then
             local handle = io.popen(dialog_cmd)
             if handle then
-                local result = handle:read("*a")
-                local exit_code = handle:close()
-                if result and result ~= "" then
-                    result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    -- Check if it's a valid path (starts with /) and not an error message
-                    if result:match("^/") and not result:match("^%s*$") and 
-                       not result:match("error") and not result:match("Error") and
-                       not result:match("not found") then
-                        file_path = result
+                local raw_result = handle:read("*a")
+                handle:close()
+                
+                if raw_result and raw_result ~= "" then
+                    -- Clean up the result - remove all whitespace and newlines
+                    local result = raw_result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    
+                    -- Check if it's a valid absolute path (starts with /)
+                    -- zenity/kdialog/yad return empty string on cancel, or a path on selection
+                    if result ~= "" and result:match("^/") then
+                        -- Additional validation: make sure it's not an error message
+                        local lower_result = string.lower(result)
+                        if not lower_result:match("error") and 
+                           not lower_result:match("not found") and
+                           not lower_result:match("cancelled") and
+                           not lower_result:match("timeout") then
+                            file_path = result
+                        end
                     end
                 end
             end
