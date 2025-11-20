@@ -1,6 +1,6 @@
 # PacketSanitizer
 
-![Version](https://img.shields.io/badge/version-0.0.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
 ![License](https://img.shields.io/badge/license-GPL%20v2-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 ![Python](https://img.shields.io/badge/python-3.6%2B-blue.svg)
@@ -10,28 +10,41 @@ A Wireshark Lua plugin for sanitizing PCAP/PCAPNG files for safe sharing outside
 
 ## Description
 
-PacketSanitizer is a Wireshark plugin that sanitizes packet capture files by:
-- **Anonymizing IP addresses** - Replaces all IPs with anonymized versions while maintaining conversation flows
-- **Anonymizing MAC addresses** - Replaces all MAC addresses with anonymized versions
-- **Removing DHCP data** - Completely removes DHCP layer information
-- **Sanitizing payloads** - Replaces UDP and TCP payload data with a recognizable pattern (0x5341 = "SA" for "Sanitized") while preserving packet size
-- **Preserving structure** - Maintains full packet structure and size for analysis while removing sensitive data
+PacketSanitizer is a Wireshark plugin that sanitizes packet capture files for safe sharing outside organizations. It offers three sanitization modes to suit different security needs:
 
-The original file is preserved, and a sanitized copy is created with the `_sanitized` suffix.
+1. **Sanitize All Payload** - Sanitizes all TCP/UDP/ICMP payloads while preserving IP and MAC addresses
+2. **Sanitize Clear Text Payload** - Only sanitizes payloads from clear text protocols (HTTP, FTP, Telnet, SMTP, POP3, IMAP, DNS), leaving encrypted traffic untouched
+3. **Sanitize Payload and IP & MAC Addresses** - Complete sanitization including all payloads and full IP/MAC address anonymization
+
+### Sanitization Features
+
+- **Anonymizing IP addresses** - Replaces all IPs with anonymized versions while maintaining conversation flows (mode 3 only)
+- **Anonymizing MAC addresses** - Replaces all MAC addresses with anonymized versions (mode 3 only)
+- **Removing DHCP data** - Completely removes DHCP layer information (mode 3 only)
+- **Sanitizing payloads** - Replaces payload data with a recognizable pattern (0x5341 = "SA" for "Sanitized") while preserving packet size
+- **Preserving structure** - Maintains full packet structure and size for analysis while removing sensitive data
+- **IGMP preservation** - IGMP packets are left completely untouched to avoid malformed packet errors
+
+The original file is preserved, and a sanitized copy is created with a mode-specific suffix.
 
 ## Screenshots
 
 ### Wireshark Menu Integration
 
-The PacketSanitizer plugin appears in Wireshark's Tools menu:
+The PacketSanitizer plugin appears in Wireshark's Tools menu with three sanitization options:
 
-![Wireshark Menu](examples/Sanitize.png)
+![Wireshark Menu](examples/PacketSanitizer-Menu.png)
+
+**Menu Structure:**
+- **Tools → PacketSanitizer → Sanitize All Payload**
+- **Tools → PacketSanitizer → Sanitize Clear Text Payload**
+- **Tools → PacketSanitizer → Sanitize Payload and IP & MAC Addresses**
 
 ### Sanitization Process
 
-When you select "Sanitize PCAP(NG)" from the Tools menu, the plugin will:
+When you select a sanitization mode from the Tools menu, the plugin will:
 1. Detect the current capture file (or prompt you to select one)
-2. Process all packets to sanitize sensitive data
+2. Process all packets according to the selected mode
 3. Display a success message with an option to open the sanitized file
 
 ![Success Dialog](examples/PacketSanitizer-Success.png)
@@ -49,6 +62,8 @@ When you select "Sanitize PCAP(NG)" from the Tools menu, the plugin will:
 - Payload data replaced with "SA" pattern (0x5341)
 - DHCP information removed
 - IGMP packets left untouched
+
+![Before/After Comparison](examples/PacketSanitizer-Comparison.png)
 
 ## Installation
 
@@ -99,16 +114,66 @@ When you select "Sanitize PCAP(NG)" from the Tools menu, the plugin will:
 ## Usage
 
 1. Open a PCAP/PCAPNG file in Wireshark
-2. Go to **Tools → PacketSanitizer → Sanitize Current File**
-3. The sanitized file will be created in the same directory with `_sanitized.pcap` suffix
+2. Go to **Tools → PacketSanitizer** and select one of the three sanitization modes:
+   - **Sanitize All Payload** - Creates `*_sanitized_payload.pcap`
+   - **Sanitize Clear Text Payload** - Creates `*_sanitized_cleartext.pcap`
+   - **Sanitize Payload and IP & MAC Addresses** - Creates `*_sanitized_full.pcap`
+3. The sanitized file will be created in the same directory with a mode-specific suffix
 4. The original file remains unchanged
+
+### Sanitization Modes Explained
+
+#### Mode 1: Sanitize All Payload
+- **Use case**: When you want to remove all payload data but preserve network topology (IPs and MACs)
+- **What's sanitized**: All TCP, UDP, and ICMP payloads
+- **What's preserved**: IP addresses, MAC addresses, protocol headers, port numbers
+
+#### Mode 2: Sanitize Clear Text Payload
+- **Use case**: When you want to sanitize only sensitive clear text data while preserving encrypted traffic
+- **What's sanitized**: Only payloads from clear text protocols (see [Plain Text Protocols](#plain-text-protocols) below)
+- **What's preserved**: IP addresses, MAC addresses, encrypted traffic payloads (HTTPS, SSH, etc.)
+
+#### Mode 3: Sanitize Payload and IP & MAC Addresses
+- **Use case**: Maximum sanitization for sharing outside your organization
+- **What's sanitized**: All payloads, all IP addresses, all MAC addresses, DHCP data
+- **What's preserved**: Protocol structure, port numbers, packet timing
+
+### Plain Text Protocols
+
+The following protocols are considered "plain text" and will have their payloads sanitized in **Mode 2: Sanitize Clear Text Payload**:
+
+- **HTTP** (ports 80, 8080, 8000, 8008, 8888) - Web traffic
+- **FTP** (ports 21, 20) - File Transfer Protocol
+- **Telnet** (port 23) - Remote terminal access
+- **SMTP** (ports 25, 587) - Email sending
+- **POP3** (ports 110, 995) - Email receiving
+- **IMAP** (ports 143, 993) - Email access
+- **DNS** (port 53) - Domain name queries
+
+The plugin detects these protocols by:
+1. **Port number matching** - Common ports for these protocols
+2. **Payload content analysis** - Detecting protocol-specific signatures:
+   - HTTP: GET, POST, PUT, DELETE, HEAD, OPTIONS methods or HTTP/1.x, HTTP/2 responses
+   - FTP: USER, PASS, RETR, STOR commands
+   - SMTP: EHLO, HELO, MAIL FROM:, RCPT TO: commands
+   - POP3: USER, PASS, RETR, DELE commands
+   - IMAP: LOGIN, SELECT, FETCH commands
+
+**Note**: Encrypted variants (HTTPS, FTPS, SMTPS, etc.) are **not** considered plain text and will be preserved in Mode 2.
 
 ### Command Line Usage
 
 You can also use the Python script directly:
 
 ```bash
-python3 sanitize_packets.py input.pcap output_sanitized.pcap
+# Mode 1: Sanitize all payloads
+python3 sanitize_packets.py all_payload input.pcap output.pcap
+
+# Mode 2: Sanitize only clear text payloads
+python3 sanitize_packets.py cleartext_payload input.pcap output.pcap
+
+# Mode 3: Full sanitization (payloads + IP/MAC addresses)
+python3 sanitize_packets.py payload_and_addresses input.pcap output.pcap
 ```
 
 ## How It Works
@@ -152,11 +217,11 @@ PacketSanitizer/
 ```
 
 **How the plugin works:**
-1. `PacketSanitizer.lua` is loaded by Wireshark and adds a menu item under "Tools"
-2. When clicked, the Lua script finds `sanitize_packets.py` in the same directory
-3. The Lua script executes: `python3 sanitize_packets.py <input_file> <output_file>`
-4. The Python script uses Scapy to sanitize the packets
-5. Results are shown in a Wireshark text window
+1. `PacketSanitizer.lua` is loaded by Wireshark and adds menu items under "Tools → PacketSanitizer"
+2. When a mode is selected, the Lua script finds `sanitize_packets.py` in the same directory
+3. The Lua script executes: `python3 sanitize_packets.py <mode> <input_file> <output_file>`
+4. The Python script uses Scapy to sanitize the packets according to the selected mode
+5. Results are shown in a Wireshark text window with an option to open the sanitized file
 
 ## Security Notes
 

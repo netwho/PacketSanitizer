@@ -156,22 +156,15 @@ local function sanitize_capture(mode)
     file:close()
     
     -- Check if Python script exists
-    -- Get the directory where this Lua script is located
-    local script_source = debug.getinfo(1, "S").source:match("@(.*)")
-    local script_dir = script_source
-    
-    -- Extract directory path (remove filename)
+    local script_dir = debug.getinfo(1, "S").source:match("@(.*)")
+    -- Normalize path separators for current platform
     if is_windows() then
-        -- Windows: remove filename and normalize to backslashes
         script_dir = script_dir:gsub("/", "\\")
-        script_dir = script_dir:match("^(.*\\)") or script_dir
         if not script_dir:match("\\$") then
             script_dir = script_dir .. "\\"
         end
     else
-        -- Unix-like: remove filename and normalize to forward slashes
         script_dir = script_dir:gsub("\\", "/")
-        script_dir = script_dir:match("^(.*/)") or script_dir
         if not script_dir:match("/$") then
             script_dir = script_dir .. "/"
         end
