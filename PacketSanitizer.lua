@@ -27,6 +27,23 @@ local function is_windows()
     return package.config:sub(1,1) == "\\"
 end
 
+-- Helper function to detect macOS
+local function is_macos()
+    if is_windows() then
+        return false
+    end
+    -- Check for macOS-specific commands or paths
+    local handle = io.popen("uname -s 2>/dev/null")
+    if handle then
+        local result = handle:read("*a")
+        handle:close()
+        if result and result:match("Darwin") then
+            return true
+        end
+    end
+    return false
+end
+
 -- Helper function to show messages
 local function show_message(title, message)
     -- Use TextWindow.new() which is the standard Wireshark Lua API
@@ -54,8 +71,8 @@ local function show_file_dialog()
                 end
             end
         end
-    else
-        -- macOS/Linux: Use osascript (macOS) or fallback
+    elseif is_macos() then
+        -- macOS: Use osascript
         local tmp_dir = os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
         local tmp_script = tmp_dir .. "/packetsanitizer_" .. os.time() .. ".scpt"
         
@@ -95,6 +112,62 @@ local function show_file_dialog()
                        not lower_result:match("timeout") and
                        not lower_result:match("user cancelled") and
                        not lower_result:match("execution error") then
+                        file_path = result
+                    end
+                end
+            end
+        end
+    else
+        -- Linux: Try zenity, kdialog, or yad
+        local dialog_cmd = nil
+        local dialog_test = nil
+        
+        -- Try zenity (GNOME)
+        dialog_test = io.popen("which zenity 2>/dev/null")
+        if dialog_test then
+            local zenity_path = dialog_test:read("*a")
+            dialog_test:close()
+            if zenity_path and zenity_path ~= "" then
+                zenity_path = zenity_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                dialog_cmd = '"' .. zenity_path .. '" --file-selection --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" --file-filter="All files | *.*" 2>/dev/null'
+            end
+        end
+        
+        -- Try kdialog (KDE) if zenity not found
+        if not dialog_cmd then
+            dialog_test = io.popen("which kdialog 2>/dev/null")
+            if dialog_test then
+                local kdialog_path = dialog_test:read("*a")
+                dialog_test:close()
+                if kdialog_path and kdialog_path ~= "" then
+                    kdialog_path = kdialog_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    dialog_cmd = '"' .. kdialog_path .. '" --getopenfilename ~ "PCAP files (*.pcap *.pcapng)" 2>/dev/null'
+                end
+            end
+        end
+        
+        -- Try yad if neither zenity nor kdialog found
+        if not dialog_cmd then
+            dialog_test = io.popen("which yad 2>/dev/null")
+            if dialog_test then
+                local yad_path = dialog_test:read("*a")
+                dialog_test:close()
+                if yad_path and yad_path ~= "" then
+                    yad_path = yad_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    dialog_cmd = '"' .. yad_path .. '" --file --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" 2>/dev/null'
+                end
+            end
+        end
+        
+        -- Execute the dialog command if found
+        if dialog_cmd then
+            local handle = io.popen(dialog_cmd)
+            if handle then
+                local result = handle:read("*a")
+                handle:close()
+                if result and result ~= "" then
+                    result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    if result:match("^/") and not result:match("^%s*$") then  -- Valid POSIX path
                         file_path = result
                     end
                 end
