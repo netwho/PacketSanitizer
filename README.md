@@ -33,7 +33,7 @@ The original file is preserved, and a sanitized copy is created with a mode-spec
 
 The PacketSanitizer plugin appears in Wireshark's Tools menu with three sanitization options:
 
-![Wireshark Menu](examples/PacketSanitizer-Menu.png)
+![Wireshark Menu](examples/Sanitize.png)
 
 **Menu Structure:**
 - **Tools → PacketSanitizer → Sanitize All Payload**
@@ -46,8 +46,6 @@ When you select a sanitization mode from the Tools menu, the plugin will:
 1. Detect the current capture file (or prompt you to select one)
 2. Process all packets according to the selected mode
 3. Display a success message with an option to open the sanitized file
-
-![Success Dialog](examples/PacketSanitizer-Success.png)
 
 ### Before and After Comparison
 
@@ -63,11 +61,48 @@ When you select a sanitization mode from the Tools menu, the plugin will:
 - DHCP information removed
 - IGMP packets left untouched
 
-![Before/After Comparison](examples/PacketSanitizer-Comparison.png)
-
 ## Installation
 
-### Prerequisites
+### Quick Install (Recommended)
+
+We provide automated installers for macOS, Linux, and Windows that check prerequisites and install the plugin automatically.
+
+#### macOS
+
+```bash
+cd installers/macos
+./install.sh
+```
+
+#### Linux
+
+```bash
+cd installers/linux
+./install.sh
+```
+
+#### Windows
+
+```powershell
+cd installers\windows
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+The installers will:
+- ✅ Check for Wireshark 3.0+
+- ✅ Check for Python 3.6+
+- ✅ Check for Scapy library
+- ✅ Create plugin directory
+- ✅ Copy plugin files
+- ✅ Verify installation
+
+For detailed installation instructions, see [installers/README.md](installers/README.md).
+
+### Manual Installation
+
+If you prefer to install manually:
+
+#### Prerequisites
 
 1. **Python 3** (3.6 or later)
 2. **Scapy library**:
@@ -85,21 +120,25 @@ When you select a sanitization mode from the Tools menu, the plugin will:
    pip3 install -r requirements.txt
    ```
 
-### Wireshark Plugin Installation
+#### Wireshark Plugin Installation
 
 **Important:** Both `PacketSanitizer.lua` and `sanitize_packets.py` must be in the same directory for the plugin to work. The Lua script automatically finds the Python script in its own directory.
 
-1. Copy the entire PacketSanitizer directory (containing both files) to your Wireshark plugins directory:
+1. Copy both files to your Wireshark plugins directory:
    
-   **Linux/macOS:**
+   **macOS/Linux:**
    ```bash
-   cp -r PacketSanitizer ~/.local/lib/wireshark/plugins/
+   mkdir -p ~/.local/lib/wireshark/plugins/PacketSanitizer
+   cp PacketSanitizer.lua ~/.local/lib/wireshark/plugins/PacketSanitizer/
+   cp sanitize_packets.py ~/.local/lib/wireshark/plugins/PacketSanitizer/
    chmod +x ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py
    ```
    
    **Windows:**
-   ```cmd
-   xcopy PacketSanitizer "%APPDATA%\Wireshark\plugins\PacketSanitizer\" /E /I
+   ```powershell
+   New-Item -ItemType Directory -Path "$env:APPDATA\Wireshark\plugins\PacketSanitizer" -Force
+   Copy-Item PacketSanitizer.lua "$env:APPDATA\Wireshark\plugins\PacketSanitizer\"
+   Copy-Item sanitize_packets.py "$env:APPDATA\Wireshark\plugins\PacketSanitizer\"
    ```
 
 2. Restart Wireshark
