@@ -34,9 +34,9 @@ if [ -d "/Applications/Wireshark.app" ]; then
     echo -e "${GREEN}✓${NC} Wireshark found (version: $WS_VERSION)"
     
     # Check version >= 3.0
-    if [[ "$WS_VERSION" != "unknown" ]]; then
+    if [ "$WS_VERSION" != "unknown" ]; then
         MAJOR_VERSION=$(echo "$WS_VERSION" | cut -d. -f1)
-        if [[ "$MAJOR_VERSION" -lt 3 ]]; then
+        if [ "$MAJOR_VERSION" -lt 3 ]; then
             echo -e "${YELLOW}⚠${NC}  Warning: Wireshark 3.0+ recommended (found $WS_VERSION)"
         fi
     fi
@@ -53,7 +53,8 @@ if command -v python3 &> /dev/null; then
     PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
     PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
     
-    if [[ "$PYTHON_MAJOR" -ge 3 ]] && [[ "$PYTHON_MINOR" -ge 6 ]]; then
+    # Use [ instead of [[ for better compatibility
+    if [ "$PYTHON_MAJOR" -ge 3 ] && [ "$PYTHON_MINOR" -ge 6 ]; then
         echo -e "${GREEN}✓${NC} Python 3 found (version: $PYTHON_VERSION)"
     else
         echo -e "${RED}✗${NC} Python 3.6+ required (found $PYTHON_VERSION)"
