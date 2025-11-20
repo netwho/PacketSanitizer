@@ -129,7 +129,8 @@ local function show_file_dialog()
             dialog_test:close()
             if zenity_path and zenity_path ~= "" then
                 zenity_path = zenity_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                dialog_cmd = '"' .. zenity_path .. '" --file-selection --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" --file-filter="All files | *.*" 2>/dev/null'
+                -- zenity returns empty string on cancel, so we need to capture both stdout and stderr
+                dialog_cmd = zenity_path .. " --file-selection --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' --file-filter='All files | *.*' 2>&1"
             end
         end
         
@@ -141,7 +142,8 @@ local function show_file_dialog()
                 dialog_test:close()
                 if kdialog_path and kdialog_path ~= "" then
                     kdialog_path = kdialog_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    dialog_cmd = '"' .. kdialog_path .. '" --getopenfilename ~ "PCAP files (*.pcap *.pcapng)" 2>/dev/null'
+                    -- kdialog returns empty string on cancel
+                    dialog_cmd = kdialog_path .. " --getopenfilename $HOME 'PCAP files (*.pcap *.pcapng)' 2>&1"
                 end
             end
         end
@@ -154,7 +156,7 @@ local function show_file_dialog()
                 dialog_test:close()
                 if yad_path and yad_path ~= "" then
                     yad_path = yad_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    dialog_cmd = '"' .. yad_path .. '" --file --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" 2>/dev/null'
+                    dialog_cmd = yad_path .. " --file --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' 2>&1"
                 end
             end
         end
@@ -164,10 +166,13 @@ local function show_file_dialog()
             local handle = io.popen(dialog_cmd)
             if handle then
                 local result = handle:read("*a")
-                handle:close()
+                local exit_code = handle:close()
                 if result and result ~= "" then
                     result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    if result:match("^/") and not result:match("^%s*$") then  -- Valid POSIX path
+                    -- Check if it's a valid path (starts with /) and not an error message
+                    if result:match("^/") and not result:match("^%s*$") and 
+                       not result:match("error") and not result:match("Error") and
+                       not result:match("not found") then
                         file_path = result
                     end
                 end
@@ -204,6 +209,32 @@ local function sanitize_capture(mode)
                     "python \"%APPDATA%\\Wireshark\\plugins\\PacketSanitizer\\sanitize_packets.py\" ^\n" ..
                     "  payload_and_addresses C:\\Users\\YourName\\Downloads\\capture.pcap C:\\Users\\YourName\\Downloads\\capture_sanitized.pcap"
             else
+                -- Check if dialog tools are available
+                local has_dialog = false
+                local dialog_name = ""
+                local test_handle = io.popen("which zenity kdialog yad 2>/dev/null | head -1")
+                if test_handle then
+                    local dialog_tool = test_handle:read("*a")
+                    test_handle:close()
+                    if dialog_tool and dialog_tool ~= "" then
+                        has_dialog = true
+                        if dialog_tool:match("zenity") then
+                            dialog_name = "zenity"
+                        elseif dialog_tool:match("kdialog") then
+                            dialog_name = "kdialog"
+                        elseif dialog_tool:match("yad") then
+                            dialog_name = "yad"
+                        end
+                    end
+                end
+                
+                if not has_dialog then
+                    debug_msg = debug_msg .. "No file dialog tool found (zenity/kdialog/yad).\n" ..
+                        "Install one for GUI file selection:\n" ..
+                        "  sudo apt install zenity    # Debian/Ubuntu\n" ..
+                        "  sudo dnf install zenity    # Fedora\n\n"
+                end
+                
                 debug_msg = debug_msg .. "You can sanitize files using the command line:\n\n" ..
                     "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
                     "  <mode> <input_file> <output_file>\n\n" ..
