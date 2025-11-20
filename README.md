@@ -251,16 +251,41 @@ PacketSanitizer/
 ├── PacketSanitizer.lua    # Wireshark Lua plugin (menu integration)
 ├── sanitize_packets.py    # Python script (packet sanitization)
 ├── requirements.txt       # Python dependencies
-├── README.md             # This file
-└── INSTALL.md            # Detailed installation guide
+├── README.md              # This file
+├── INSTALL.md             # Detailed installation guide
+├── CONTRIBUTING.md         # Contribution guidelines
+├── LICENSE                 # GPL v2 license
+├── VERSION                 # Version file (0.1.0)
+├── examples/               # Screenshots directory
+│   ├── README.md          # Screenshot documentation
+│   ├── Sanitize.png       # Main menu screenshot
+│   └── PacketSanitizer-Success.png  # Success dialog screenshot
+└── installers/             # Platform-specific installers
+    ├── README.md          # Installer documentation
+    ├── macos/
+    │   ├── install.sh     # macOS installer script
+    │   ├── PacketSanitizer.lua
+    │   └── sanitize_packets.py
+    ├── linux/
+    │   ├── install.sh     # Linux installer script
+    │   ├── PacketSanitizer.lua
+    │   └── sanitize_packets.py
+    └── windows/
+        ├── install.ps1    # Windows installer script (PowerShell)
+        ├── PacketSanitizer.lua
+        └── sanitize_packets.py
 ```
 
 **How the plugin works:**
 1. `PacketSanitizer.lua` is loaded by Wireshark and adds menu items under "Tools → PacketSanitizer"
 2. When a mode is selected, the Lua script finds `sanitize_packets.py` in the same directory
-3. The Lua script executes: `python3 sanitize_packets.py <mode> <input_file> <output_file>`
+3. The Lua script executes: `python3 sanitize_packets.py <mode> <input_file> <output_file>` (or `python` on Windows)
 4. The Python script uses Scapy to sanitize the packets according to the selected mode
 5. Results are shown in a Wireshark text window with an option to open the sanitized file
+
+**Installation:**
+- Use the automated installers in `installers/` for your platform (recommended)
+- Or manually copy `PacketSanitizer.lua` and `sanitize_packets.py` to your Wireshark plugins directory
 
 ## Security Notes
 
