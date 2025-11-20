@@ -168,6 +168,90 @@ else
     echo -e "${YELLOW}⚠${NC}  Lua command not found (but may be bundled with Wireshark)"
 fi
 
+# Check for file dialog tools (optional but recommended)
+echo ""
+echo -e "${BLUE}Checking optional dependencies (file dialog)...${NC}"
+echo ""
+
+HAS_DIALOG=false
+DIALOG_TOOL=""
+
+# Check for zenity (GNOME)
+echo -e "${YELLOW}→${NC} Checking for zenity (file dialog for GNOME)..."
+if command -v zenity &> /dev/null; then
+    ZENITY_VERSION=$(zenity --version 2>/dev/null || echo "found")
+    echo -e "${GREEN}✓${NC} zenity found ($ZENITY_VERSION)"
+    HAS_DIALOG=true
+    DIALOG_TOOL="zenity"
+else
+    echo -e "${YELLOW}✗${NC} zenity not found"
+fi
+
+# Check for kdialog (KDE)
+if [ "$HAS_DIALOG" = false ]; then
+    echo -e "${YELLOW}→${NC} Checking for kdialog (file dialog for KDE)..."
+    if command -v kdialog &> /dev/null; then
+        echo -e "${GREEN}✓${NC} kdialog found"
+        HAS_DIALOG=true
+        DIALOG_TOOL="kdialog"
+    else
+        echo -e "${YELLOW}✗${NC} kdialog not found"
+    fi
+fi
+
+# Check for yad (alternative)
+if [ "$HAS_DIALOG" = false ]; then
+    echo -e "${YELLOW}→${NC} Checking for yad (alternative file dialog)..."
+    if command -v yad &> /dev/null; then
+        YAD_VERSION=$(yad --version 2>/dev/null || echo "found")
+        echo -e "${GREEN}✓${NC} yad found ($YAD_VERSION)"
+        HAS_DIALOG=true
+        DIALOG_TOOL="yad"
+    else
+        echo -e "${YELLOW}✗${NC} yad not found"
+    fi
+fi
+
+# Installation recommendations for file dialog
+if [ "$HAS_DIALOG" = false ]; then
+    echo ""
+    echo -e "${YELLOW}⚠${NC}  ${YELLOW}No file dialog tool found (optional but recommended)${NC}"
+    echo ""
+    echo -e "${BLUE}To enable GUI file selection in the plugin:${NC}"
+    echo ""
+    case "$PKG_MANAGER" in
+        apt)
+            echo -e "  ${GREEN}Install zenity:${NC}"
+            echo "    sudo apt install zenity"
+            ;;
+        dnf)
+            echo -e "  ${GREEN}Install zenity:${NC}"
+            echo "    sudo dnf install zenity"
+            ;;
+        yum)
+            echo -e "  ${GREEN}Install zenity:${NC}"
+            echo "    sudo yum install zenity"
+            ;;
+        pacman)
+            echo -e "  ${GREEN}Install zenity:${NC}"
+            echo "    sudo pacman -S zenity"
+            ;;
+        zypper)
+            echo -e "  ${GREEN}Install zenity:${NC}"
+            echo "    sudo zypper install zenity"
+            ;;
+        *)
+            echo "  Install zenity from your distribution's package manager"
+            ;;
+    esac
+    echo ""
+    echo -e "  ${GREEN}Note:${NC} The plugin will still work without a file dialog tool."
+    echo "  You can use command-line mode or open files directly in Wireshark first."
+    echo ""
+else
+    echo -e "${GREEN}✓${NC} File dialog tool found ($DIALOG_TOOL) - GUI file selection enabled"
+fi
+
 # Exit if critical prerequisites failed
 if [ "$PREREQ_FAILED" = true ]; then
     echo ""
