@@ -184,7 +184,7 @@ After installation, verify the plugin:
    - You should see three submenu options
 4. **Check About Plugins:**
    - Go to **Help → About Wireshark → Plugins**
-   - Look for "PacketSanitizer" with version 0.1.0
+   - Look for "PacketSanitizer" with version 0.1.1
 
 ## Troubleshooting
 

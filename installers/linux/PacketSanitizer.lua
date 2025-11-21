@@ -1,5 +1,5 @@
 -- PacketSanitizer Wireshark Lua Plugin
--- Version: 0.1.0
+-- Version: 0.1.1
 --
 -- A Wireshark plugin to sanitize PCAP/PCAPNG files for safe sharing
 -- Replaces IPs, MACs, removes payloads, and voids sensitive data
@@ -8,7 +8,7 @@
 if not gui_enabled() then return end
 
 local plugin_name = "PacketSanitizer"
-local plugin_version = "0.1.0"
+local plugin_version = "0.1.1"
 
 -- Register plugin information for Wireshark's About - Plugins list
 -- Wireshark automatically detects plugins in the plugins directory
