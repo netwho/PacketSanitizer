@@ -58,17 +58,53 @@ local function show_file_dialog()
     
     if is_windows() then
         -- Windows: Use PowerShell file dialog
-        local ps_script = '[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = "PCAP files (*.pcap, *.pcapng)|*.pcap;*.pcapng|All files (*.*)|*.*"; $dialog.Title = "Select PCAP/PCAPNG file to sanitize"; if ($dialog.ShowDialog() -eq "OK") { Write-Output $dialog.FileName }'
-        local ps_cmd = 'powershell -NoProfile -Command "' .. ps_script:gsub('"', '\\"') .. '"'
-        local handle = io.popen(ps_cmd)
-        if handle then
-            local result = handle:read("*a")
-            handle:close()
-            if result and result ~= "" then
-                result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                if result:match("^[A-Za-z]:") or result:match("^\\\\") then  -- Windows path
-                    file_path = result
+        -- Create a temporary PowerShell script file to avoid escaping issues
+        local tmp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
+        local tmp_script = tmp_dir .. "\\packetsanitizer_" .. os.time() .. ".ps1"
+        
+        -- PowerShell script content
+        local ps_content = 'Add-Type -AssemblyName System.Windows.Forms\n' ..
+                          '$dialog = New-Object System.Windows.Forms.OpenFileDialog\n' ..
+                          '$dialog.Filter = "PCAP files (*.pcap, *.pcapng)|*.pcap;*.pcapng|All files (*.*)|*.*"\n' ..
+                          '$dialog.Title = "Select PCAP/PCAPNG file to sanitize"\n' ..
+                          'if ($dialog.ShowDialog() -eq "OK") {\n' ..
+                          '    Write-Output $dialog.FileName\n' ..
+                          '}\n'
+        
+        -- Write PowerShell script to temp file
+        local script_file = io.open(tmp_script, "w")
+        if script_file then
+            script_file:write(ps_content)
+            script_file:close()
+            
+            -- Execute PowerShell script
+            local ps_cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. tmp_script .. '" 2>&1'
+            local handle = io.popen(ps_cmd)
+            if handle then
+                local raw_result = handle:read("*a")
+                handle:close()
+                
+                -- Clean up temp file
+                os.remove(tmp_script)
+                
+                -- Process the result
+                if raw_result and raw_result ~= "" then
+                    local result = raw_result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    -- Check if it's a valid Windows path (drive letter or UNC path)
+                    if result:match("^[A-Za-z]:") or result:match("^\\\\") then
+                        -- Additional validation: make sure it's not an error message
+                        local lower_result = string.lower(result)
+                        if not lower_result:match("error") and 
+                           not lower_result:match("exception") and
+                           not lower_result:match("cannot") and
+                           not lower_result:match("not found") then
+                            file_path = result
+                        end
+                    end
                 end
+            else
+                -- Clean up temp file even if handle failed
+                os.remove(tmp_script)
             end
         end
     elseif is_macos() then
@@ -441,8 +477,29 @@ local function sanitize_capture(mode)
         end
     end
     
-    -- Call Python script and capture output
-    local command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', python_cmd, python_script, mode, file_path, output_file)
+    -- Call Python script and capture output (platform-specific command construction)
+    local command = nil
+    if is_windows() then
+        -- Windows: io.popen uses cmd.exe
+        -- On Windows cmd.exe, quotes are escaped by doubling them ("")
+        -- Each argument with spaces must be quoted
+        local quote_arg = function(arg)
+            -- Escape quotes by doubling them (Windows cmd.exe style)
+            local escaped = arg:gsub('"', '""')
+            return '"' .. escaped .. '"'
+        end
+        -- Build command - quote paths that might have spaces
+        command = string.format('%s %s %s %s %s 2>&1', 
+            quote_arg(python_cmd),
+            quote_arg(python_script),
+            mode,  -- mode doesn't need quoting (no spaces expected)
+            quote_arg(file_path),
+            quote_arg(output_file))
+    else
+        -- Unix-like: Standard shell syntax
+        command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', 
+            python_cmd, python_script, mode, file_path, output_file)
+    end
     
     -- Execute command and capture output
     local handle = io.popen(command)
@@ -484,17 +541,28 @@ local function sanitize_capture(mode)
         
         -- Add button to open the sanitized file
         tw:add_button("Open File", function()
-            -- Try to open the file in Wireshark
-            -- On macOS, use 'open' command which will use the default app for .pcap files
-            -- This should open in Wireshark if it's the default app
-            local open_cmd = nil
-            if package.config:sub(1,1) == "/" then  -- Unix-like (macOS/Linux)
-                -- Try to open with Wireshark directly first
+            -- Try to open the file in Wireshark (platform-specific)
+            if is_windows() then
+                -- Windows: Use start command
+                os.execute('start "" "' .. output_file .. '"')
+            elseif is_macos() then
+                -- macOS: Use 'open' command
                 local wireshark_cmd = 'open -a Wireshark "' .. output_file .. '" 2>/dev/null || open "' .. output_file .. '"'
                 os.execute(wireshark_cmd)
             else
-                -- Windows
-                os.execute('start "" "' .. output_file .. '"')
+                -- Linux: Try xdg-open (standard), or try to find Wireshark executable
+                local open_cmd = 'xdg-open "' .. output_file .. '" 2>/dev/null'
+                -- Try to find wireshark executable and open with it
+                local ws_test = io.popen("which wireshark 2>/dev/null")
+                if ws_test then
+                    local ws_path = ws_test:read("*a")
+                    ws_test:close()
+                    if ws_path and ws_path ~= "" then
+                        ws_path = ws_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                        open_cmd = '"' .. ws_path .. '" "' .. output_file .. '" 2>/dev/null &'
+                    end
+                end
+                os.execute(open_cmd)
             end
             tw:close()
         end)

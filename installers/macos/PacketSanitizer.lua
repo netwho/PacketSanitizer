@@ -58,17 +58,53 @@ local function show_file_dialog()
     
     if is_windows() then
         -- Windows: Use PowerShell file dialog
-        local ps_script = '[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = "PCAP files (*.pcap, *.pcapng)|*.pcap;*.pcapng|All files (*.*)|*.*"; $dialog.Title = "Select PCAP/PCAPNG file to sanitize"; if ($dialog.ShowDialog() -eq "OK") { Write-Output $dialog.FileName }'
-        local ps_cmd = 'powershell -NoProfile -Command "' .. ps_script:gsub('"', '\\"') .. '"'
-        local handle = io.popen(ps_cmd)
-        if handle then
-            local result = handle:read("*a")
-            handle:close()
-            if result and result ~= "" then
-                result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                if result:match("^[A-Za-z]:") or result:match("^\\\\") then  -- Windows path
-                    file_path = result
+        -- Create a temporary PowerShell script file to avoid escaping issues
+        local tmp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
+        local tmp_script = tmp_dir .. "\\packetsanitizer_" .. os.time() .. ".ps1"
+        
+        -- PowerShell script content
+        local ps_content = 'Add-Type -AssemblyName System.Windows.Forms\n' ..
+                          '$dialog = New-Object System.Windows.Forms.OpenFileDialog\n' ..
+                          '$dialog.Filter = "PCAP files (*.pcap, *.pcapng)|*.pcap;*.pcapng|All files (*.*)|*.*"\n' ..
+                          '$dialog.Title = "Select PCAP/PCAPNG file to sanitize"\n' ..
+                          'if ($dialog.ShowDialog() -eq "OK") {\n' ..
+                          '    Write-Output $dialog.FileName\n' ..
+                          '}\n'
+        
+        -- Write PowerShell script to temp file
+        local script_file = io.open(tmp_script, "w")
+        if script_file then
+            script_file:write(ps_content)
+            script_file:close()
+            
+            -- Execute PowerShell script
+            local ps_cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. tmp_script .. '" 2>&1'
+            local handle = io.popen(ps_cmd)
+            if handle then
+                local raw_result = handle:read("*a")
+                handle:close()
+                
+                -- Clean up temp file
+                os.remove(tmp_script)
+                
+                -- Process the result
+                if raw_result and raw_result ~= "" then
+                    local result = raw_result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    -- Check if it's a valid Windows path (drive letter or UNC path)
+                    if result:match("^[A-Za-z]:") or result:match("^\\\\") then
+                        -- Additional validation: make sure it's not an error message
+                        local lower_result = string.lower(result)
+                        if not lower_result:match("error") and 
+                           not lower_result:match("exception") and
+                           not lower_result:match("cannot") and
+                           not lower_result:match("not found") then
+                            file_path = result
+                        end
+                    end
                 end
+            else
+                -- Clean up temp file even if handle failed
+                os.remove(tmp_script)
             end
         end
     elseif is_macos() then
@@ -129,7 +165,9 @@ local function show_file_dialog()
             dialog_test:close()
             if zenity_path and zenity_path ~= "" then
                 zenity_path = zenity_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                dialog_cmd = '"' .. zenity_path .. '" --file-selection --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" --file-filter="All files | *.*" 2>/dev/null'
+                -- zenity returns file path on selection, empty string on cancel
+                -- Use --separator to ensure single line output
+                dialog_cmd = zenity_path .. " --file-selection --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' --file-filter='All files | *.*' 2>/dev/null"
             end
         end
         
@@ -141,7 +179,8 @@ local function show_file_dialog()
                 dialog_test:close()
                 if kdialog_path and kdialog_path ~= "" then
                     kdialog_path = kdialog_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    dialog_cmd = '"' .. kdialog_path .. '" --getopenfilename ~ "PCAP files (*.pcap *.pcapng)" 2>/dev/null'
+                    -- kdialog returns file path on selection, empty string on cancel
+                    dialog_cmd = kdialog_path .. " --getopenfilename $HOME 'PCAP files (*.pcap *.pcapng)' 2>/dev/null"
                 end
             end
         end
@@ -154,7 +193,8 @@ local function show_file_dialog()
                 dialog_test:close()
                 if yad_path and yad_path ~= "" then
                     yad_path = yad_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    dialog_cmd = '"' .. yad_path .. '" --file --title="Select PCAP/PCAPNG file to sanitize" --file-filter="PCAP files (*.pcap *.pcapng) | *.pcap *.pcapng" 2>/dev/null'
+                    -- yad returns file path on selection, empty string on cancel
+                    dialog_cmd = yad_path .. " --file --title='Select PCAP/PCAPNG file to sanitize' --file-filter='PCAP files | *.pcap *.pcapng' 2>/dev/null"
                 end
             end
         end
@@ -163,12 +203,24 @@ local function show_file_dialog()
         if dialog_cmd then
             local handle = io.popen(dialog_cmd)
             if handle then
-                local result = handle:read("*a")
+                local raw_result = handle:read("*a")
                 handle:close()
-                if result and result ~= "" then
-                    result = result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    if result:match("^/") and not result:match("^%s*$") then  -- Valid POSIX path
-                        file_path = result
+                
+                if raw_result and raw_result ~= "" then
+                    -- Clean up the result - remove all whitespace and newlines
+                    local result = raw_result:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    
+                    -- Check if it's a valid absolute path (starts with /)
+                    -- zenity/kdialog/yad return empty string on cancel, or a path on selection
+                    if result ~= "" and result:match("^/") then
+                        -- Additional validation: make sure it's not an error message
+                        local lower_result = string.lower(result)
+                        if not lower_result:match("error") and 
+                           not lower_result:match("not found") and
+                           not lower_result:match("cancelled") and
+                           not lower_result:match("timeout") then
+                            file_path = result
+                        end
                     end
                 end
             end
@@ -204,6 +256,32 @@ local function sanitize_capture(mode)
                     "python \"%APPDATA%\\Wireshark\\plugins\\PacketSanitizer\\sanitize_packets.py\" ^\n" ..
                     "  payload_and_addresses C:\\Users\\YourName\\Downloads\\capture.pcap C:\\Users\\YourName\\Downloads\\capture_sanitized.pcap"
             else
+                -- Check if dialog tools are available
+                local has_dialog = false
+                local dialog_name = ""
+                local test_handle = io.popen("which zenity kdialog yad 2>/dev/null | head -1")
+                if test_handle then
+                    local dialog_tool = test_handle:read("*a")
+                    test_handle:close()
+                    if dialog_tool and dialog_tool ~= "" then
+                        has_dialog = true
+                        if dialog_tool:match("zenity") then
+                            dialog_name = "zenity"
+                        elseif dialog_tool:match("kdialog") then
+                            dialog_name = "kdialog"
+                        elseif dialog_tool:match("yad") then
+                            dialog_name = "yad"
+                        end
+                    end
+                end
+                
+                if not has_dialog then
+                    debug_msg = debug_msg .. "No file dialog tool found (zenity/kdialog/yad).\n" ..
+                        "Install one for GUI file selection:\n" ..
+                        "  sudo apt install zenity    # Debian/Ubuntu\n" ..
+                        "  sudo dnf install zenity    # Fedora\n\n"
+                end
+                
                 debug_msg = debug_msg .. "You can sanitize files using the command line:\n\n" ..
                     "python3 ~/.local/lib/wireshark/plugins/PacketSanitizer/sanitize_packets.py \\\n" ..
                     "  <mode> <input_file> <output_file>\n\n" ..
@@ -399,8 +477,29 @@ local function sanitize_capture(mode)
         end
     end
     
-    -- Call Python script and capture output
-    local command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', python_cmd, python_script, mode, file_path, output_file)
+    -- Call Python script and capture output (platform-specific command construction)
+    local command = nil
+    if is_windows() then
+        -- Windows: io.popen uses cmd.exe
+        -- On Windows cmd.exe, quotes are escaped by doubling them ("")
+        -- Each argument with spaces must be quoted
+        local quote_arg = function(arg)
+            -- Escape quotes by doubling them (Windows cmd.exe style)
+            local escaped = arg:gsub('"', '""')
+            return '"' .. escaped .. '"'
+        end
+        -- Build command - quote paths that might have spaces
+        command = string.format('%s %s %s %s %s 2>&1', 
+            quote_arg(python_cmd),
+            quote_arg(python_script),
+            mode,  -- mode doesn't need quoting (no spaces expected)
+            quote_arg(file_path),
+            quote_arg(output_file))
+    else
+        -- Unix-like: Standard shell syntax
+        command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', 
+            python_cmd, python_script, mode, file_path, output_file)
+    end
     
     -- Execute command and capture output
     local handle = io.popen(command)
@@ -442,17 +541,28 @@ local function sanitize_capture(mode)
         
         -- Add button to open the sanitized file
         tw:add_button("Open File", function()
-            -- Try to open the file in Wireshark
-            -- On macOS, use 'open' command which will use the default app for .pcap files
-            -- This should open in Wireshark if it's the default app
-            local open_cmd = nil
-            if package.config:sub(1,1) == "/" then  -- Unix-like (macOS/Linux)
-                -- Try to open with Wireshark directly first
+            -- Try to open the file in Wireshark (platform-specific)
+            if is_windows() then
+                -- Windows: Use start command
+                os.execute('start "" "' .. output_file .. '"')
+            elseif is_macos() then
+                -- macOS: Use 'open' command
                 local wireshark_cmd = 'open -a Wireshark "' .. output_file .. '" 2>/dev/null || open "' .. output_file .. '"'
                 os.execute(wireshark_cmd)
             else
-                -- Windows
-                os.execute('start "" "' .. output_file .. '"')
+                -- Linux: Try xdg-open (standard), or try to find Wireshark executable
+                local open_cmd = 'xdg-open "' .. output_file .. '" 2>/dev/null'
+                -- Try to find wireshark executable and open with it
+                local ws_test = io.popen("which wireshark 2>/dev/null")
+                if ws_test then
+                    local ws_path = ws_test:read("*a")
+                    ws_test:close()
+                    if ws_path and ws_path ~= "" then
+                        ws_path = ws_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                        open_cmd = '"' .. ws_path .. '" "' .. output_file .. '" 2>/dev/null &'
+                    end
+                end
+                os.execute(open_cmd)
             end
             tw:close()
         end)

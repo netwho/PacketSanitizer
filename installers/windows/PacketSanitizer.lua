@@ -477,8 +477,29 @@ local function sanitize_capture(mode)
         end
     end
     
-    -- Call Python script and capture output
-    local command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', python_cmd, python_script, mode, file_path, output_file)
+    -- Call Python script and capture output (platform-specific command construction)
+    local command = nil
+    if is_windows() then
+        -- Windows: io.popen uses cmd.exe
+        -- On Windows cmd.exe, quotes are escaped by doubling them ("")
+        -- Each argument with spaces must be quoted
+        local quote_arg = function(arg)
+            -- Escape quotes by doubling them (Windows cmd.exe style)
+            local escaped = arg:gsub('"', '""')
+            return '"' .. escaped .. '"'
+        end
+        -- Build command - quote paths that might have spaces
+        command = string.format('%s %s %s %s %s 2>&1', 
+            quote_arg(python_cmd),
+            quote_arg(python_script),
+            mode,  -- mode doesn't need quoting (no spaces expected)
+            quote_arg(file_path),
+            quote_arg(output_file))
+    else
+        -- Unix-like: Standard shell syntax
+        command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', 
+            python_cmd, python_script, mode, file_path, output_file)
+    end
     
     -- Execute command and capture output
     local handle = io.popen(command)
