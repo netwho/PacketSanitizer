@@ -479,36 +479,57 @@ local function sanitize_capture(mode)
     
     -- Call Python script and capture output (platform-specific command construction)
     local command = nil
+    local output = ""
+    local exit_code = nil
+    
     if is_windows() then
-        -- Windows: io.popen uses cmd.exe
-        -- On Windows cmd.exe, quotes are escaped by doubling them ("")
-        -- Each argument with spaces must be quoted
-        local quote_arg = function(arg)
-            -- Escape quotes by doubling them (Windows cmd.exe style)
-            local escaped = arg:gsub('"', '""')
-            return '"' .. escaped .. '"'
+        -- Windows: Create a temporary batch file to avoid command parsing issues
+        local tmp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
+        local tmp_bat = tmp_dir .. "\\packetsanitizer_" .. os.time() .. ".bat"
+        
+        -- Create batch file content
+        local bat_content = string.format('@echo off\n"%s" "%s" %s "%s" "%s" 2>&1\n', 
+            python_cmd:gsub('"', '""'),  -- Escape quotes in Python path
+            python_script:gsub('"', '""'),  -- Escape quotes in script path
+            mode,
+            file_path:gsub('"', '""'),  -- Escape quotes in file paths
+            output_file:gsub('"', '""'))
+        
+        -- Write batch file
+        local bat_file = io.open(tmp_bat, "w")
+        if bat_file then
+            bat_file:write(bat_content)
+            bat_file:close()
+            
+            -- Execute batch file
+            command = '"' .. tmp_bat .. '"'
+            local handle = io.popen(command)
+            if handle then
+                output = handle:read("*a")
+                exit_code = handle:close()
+            end
+            
+            -- Clean up batch file
+            os.remove(tmp_bat)
+        else
+            -- Fallback: Try direct command if batch file creation fails
+            command = string.format('"%s" "%s" %s "%s" "%s"', 
+                python_cmd, python_script, mode, file_path, output_file)
+            local handle = io.popen(command .. ' 2>&1')
+            if handle then
+                output = handle:read("*a")
+                exit_code = handle:close()
+            end
         end
-        -- Build command - quote paths that might have spaces
-        command = string.format('%s %s %s %s %s 2>&1', 
-            quote_arg(python_cmd),
-            quote_arg(python_script),
-            mode,  -- mode doesn't need quoting (no spaces expected)
-            quote_arg(file_path),
-            quote_arg(output_file))
     else
         -- Unix-like: Standard shell syntax
         command = string.format('"%s" "%s" "%s" "%s" "%s" 2>&1', 
             python_cmd, python_script, mode, file_path, output_file)
-    end
-    
-    -- Execute command and capture output
-    local handle = io.popen(command)
-    local output = ""
-    local exit_code = nil
-    
-    if handle then
-        output = handle:read("*a")
-        exit_code = handle:close()  -- Returns exit code on success
+        local handle = io.popen(command)
+        if handle then
+            output = handle:read("*a")
+            exit_code = handle:close()
+        end
     end
     
     -- Check if output file was created (more reliable than exit code)
