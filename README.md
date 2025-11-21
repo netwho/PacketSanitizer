@@ -204,17 +204,202 @@ The plugin detects these protocols by:
 
 ### Command Line Usage
 
-You can also use the Python script directly:
+You can also use the Python script directly from the command line, which is useful for:
+- Batch processing multiple files
+- Integration into scripts and automation
+- Processing files without opening Wireshark
+- Debugging and troubleshooting
+
+#### Basic Syntax
 
 ```bash
-# Mode 1: Sanitize all payloads
+python3 sanitize_packets.py <mode> <input_file> <output_file>
+```
+
+**Arguments:**
+- `<mode>` - One of three sanitization modes (see below)
+- `<input_file>` - Path to the input PCAP/PCAPNG file
+- `<output_file>` - Path where the sanitized file will be saved
+
+#### Mode 1: Sanitize All Payload (`all_payload`)
+
+Sanitizes all TCP/UDP/ICMP payloads while preserving IP and MAC addresses.
+
+**Use case:** Remove sensitive data from payloads while keeping network topology intact for analysis.
+
+**Example:**
+```bash
+python3 sanitize_packets.py all_payload capture.pcapng capture_sanitized.pcap
+```
+
+**What it does:**
+- ✅ Replaces all payload data with "SA" pattern (0x5341)
+- ✅ Preserves IP addresses (original network structure visible)
+- ✅ Preserves MAC addresses (device relationships maintained)
+- ✅ Preserves packet timing and structure
+- ✅ Removes DHCP data
+
+**Output:**
+```
+Reading packets from: capture.pcapng
+Sanitization mode: all_payload
+Loaded 1523 packets
+Sanitizing packets...
+Writing 1523 sanitized packets to: capture_sanitized.pcap
+Sanitization complete!
+
+Statistics:
+  Original packets: 1523
+  Sanitized packets: 1523
+  Unique IPs anonymized: 0
+  Unique MACs anonymized: 0
+```
+
+#### Mode 2: Sanitize Clear Text Payload (`cleartext_payload`)
+
+Only sanitizes payloads from clear text protocols, leaving encrypted traffic untouched.
+
+**Use case:** Remove sensitive clear text data (passwords, emails, etc.) while preserving encrypted traffic for analysis.
+
+**Example:**
+```bash
+python3 sanitize_packets.py cleartext_payload network_trace.pcap sanitized_cleartext.pcap
+```
+
+**What it does:**
+- ✅ Sanitizes payloads from: HTTP, FTP, Telnet, SMTP, POP3, IMAP, DNS
+- ✅ Preserves encrypted traffic payloads (HTTPS, SSH, TLS, etc.)
+- ✅ Preserves IP addresses
+- ✅ Preserves MAC addresses
+- ✅ Preserves packet timing and structure
+
+**Output:**
+```
+Reading packets from: network_trace.pcap
+Sanitization mode: cleartext_payload
+Loaded 2547 packets
+Sanitizing packets...
+Writing 2547 sanitized packets to: sanitized_cleartext.pcap
+Sanitization complete!
+
+Statistics:
+  Original packets: 2547
+  Sanitized packets: 2547
+  Unique IPs anonymized: 0
+  Unique MACs anonymized: 0
+```
+
+#### Mode 3: Full Sanitization (`payload_and_addresses`)
+
+Complete sanitization including all payloads and full IP/MAC address anonymization.
+
+**Use case:** Maximum sanitization for sharing files outside your organization while maintaining conversation flows.
+
+**Example:**
+```bash
+python3 sanitize_packets.py payload_and_addresses sensitive_capture.pcapng shared_sanitized.pcap
+```
+
+**What it does:**
+- ✅ Sanitizes all payloads (TCP, UDP, ICMP)
+- ✅ Anonymizes all IP addresses (10.0.0.0/8 range)
+- ✅ Anonymizes all MAC addresses (02:00:00:00:00:XX)
+- ✅ Removes DHCP data completely
+- ✅ Maintains conversation flows (same IP → same anonymized IP)
+- ✅ Preserves packet timing and structure
+
+**Output:**
+```
+Reading packets from: sensitive_capture.pcapng
+Sanitization mode: payload_and_addresses
+Loaded 3891 packets
+Sanitizing packets...
+Writing 3891 sanitized packets to: shared_sanitized.pcap
+Sanitization complete!
+
+Statistics:
+  Original packets: 3891
+  Sanitized packets: 3891
+  Unique IPs anonymized: 47
+  Unique MACs anonymized: 12
+```
+
+#### Platform-Specific Notes
+
+**macOS/Linux:**
+```bash
+# Use python3
 python3 sanitize_packets.py all_payload input.pcap output.pcap
 
-# Mode 2: Sanitize only clear text payloads
-python3 sanitize_packets.py cleartext_payload input.pcap output.pcap
+# Or if python3 is in your PATH as python
+python sanitize_packets.py all_payload input.pcap output.pcap
+```
 
-# Mode 3: Full sanitization (payloads + IP/MAC addresses)
-python3 sanitize_packets.py payload_and_addresses input.pcap output.pcap
+**Windows:**
+```powershell
+# Use python (or python3 if installed)
+python sanitize_packets.py all_payload input.pcap output.pcap
+
+# Or with full path
+C:\Python314\python.exe sanitize_packets.py all_payload input.pcap output.pcap
+```
+
+#### File Paths
+
+You can use relative or absolute paths:
+
+```bash
+# Relative path
+python3 sanitize_packets.py all_payload ./captures/trace.pcap ./output/sanitized.pcap
+
+# Absolute path (Unix/macOS)
+python3 sanitize_packets.py all_payload /Users/username/captures/trace.pcap /Users/username/output/sanitized.pcap
+
+# Absolute path (Windows)
+python sanitize_packets.py all_payload C:\Users\username\captures\trace.pcap C:\Users\username\output\sanitized.pcap
+```
+
+#### Error Handling
+
+The script will exit with an error code if:
+- Invalid mode specified
+- Input file not found
+- Output directory doesn't exist (and cannot be created)
+- File read/write errors occur
+
+**Example error messages:**
+```bash
+# Invalid mode
+$ python3 sanitize_packets.py invalid_mode input.pcap output.pcap
+Error: Invalid mode 'invalid_mode'. Valid modes: all_payload, cleartext_payload, payload_and_addresses
+
+# File not found
+$ python3 sanitize_packets.py all_payload missing.pcap output.pcap
+Error: Input file not found: missing.pcap
+
+# Usage help
+$ python3 sanitize_packets.py
+Usage: python3 sanitize_packets.py <mode> <input_file> <output_file>
+Modes:
+  all_payload - Sanitize all payloads (no IP/MAC anonymization)
+  cleartext_payload - Only sanitize clear text protocol payloads
+  payload_and_addresses - Sanitize all payloads AND anonymize IP/MAC addresses
+```
+
+#### Batch Processing Example
+
+You can process multiple files in a loop:
+
+```bash
+# Process all PCAP files in a directory
+for file in *.pcap; do
+    python3 sanitize_packets.py all_payload "$file" "sanitized_${file}"
+done
+
+# Process with different modes
+for file in *.pcapng; do
+    python3 sanitize_packets.py payload_and_addresses "$file" "shared_${file%.pcapng}.pcap"
+done
 ```
 
 ## How It Works
