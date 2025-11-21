@@ -47,6 +47,8 @@ When you select a sanitization mode from the Tools menu, the plugin will:
 2. Process all packets according to the selected mode
 3. Display a success message with an option to open the sanitized file
 
+![Success Dialog](examples/PacketSanitizer-Success.png)
+
 ### Before and After Comparison
 
 **Before Sanitization:**
