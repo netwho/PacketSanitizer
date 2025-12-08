@@ -1,5 +1,5 @@
 -- PacketSanitizer Wireshark Lua Plugin
--- Version: 0.1.1
+-- Version: 0.2.0
 --
 -- A Wireshark plugin to sanitize PCAP/PCAPNG files for safe sharing
 -- Replaces IPs, MACs, removes payloads, and voids sensitive data
@@ -8,7 +8,7 @@
 if not gui_enabled() then return end
 
 local plugin_name = "PacketSanitizer"
-local plugin_version = "0.1.1"
+local plugin_version = "0.2.0"
 
 -- Register plugin information for Wireshark's About - Plugins list
 -- Wireshark automatically detects plugins in the plugins directory
@@ -50,6 +50,158 @@ local function show_message(title, message)
     local tw = TextWindow.new(title)
     tw:set(message)
     tw:set_atclose(function() end)  -- Keep window open until user closes it
+end
+
+-- Helper function to get timestamp-formatted filename
+local function get_timestamp_filename()
+    -- Get current date/time and format as Capture_YYYYMMDD_HHMMSS
+    return "Capture_" .. os.date("%Y%m%d_%H%M%S")
+end
+
+-- Helper function to get temp directory (platform-specific)
+local function get_temp_dir()
+    if is_windows() then
+        return os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
+    else
+        return os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
+    end
+end
+
+-- Get the currently open capture file (most reliable method)
+-- Returns the file path if a capture is open, nil otherwise
+local function get_currently_open_capture_file()
+    -- Try multiple methods to get the open file path
+    
+    -- Method 1: CaptureInfo.file (most direct)
+    if CaptureInfo and CaptureInfo.file then
+        local file = tostring(CaptureInfo.file)
+        if file and file ~= "" then
+            return file
+        end
+    end
+    
+    -- Method 2: get_capture_file() - official API
+    local ok1, result1 = pcall(function()
+        return get_capture_file()
+    end)
+    if ok1 and result1 then
+        local file = tostring(result1)
+        if file and file ~= "" then
+            return file
+        end
+    end
+    
+    -- Method 3: Try get_window_title() for window info
+    local ok3, title = pcall(function()
+        if get_window_title then
+            return get_window_title()
+        end
+        return nil
+    end)
+    if ok3 and title then
+        -- Window title often contains filename, try to extract it
+        -- Format is usually "filename - Wireshark"
+        local filename = tostring(title):match("^(.+)%s*%-")
+        if filename and filename ~= "" then
+            -- Check if this looks like a path
+            if filename:match("/") or filename:match("\\") then
+                return filename
+            end
+        end
+    end
+    
+    -- Method 4: Check running_mode
+    local ok2, running = pcall(function()
+        return running_mode()
+    end)
+    if ok2 and running then
+        -- Running mode indicates packets are loaded
+        return "__PACKETS_LOADED__"
+    end
+    
+    return nil
+end
+
+-- Helper function to check if packets are available in buffer
+-- Returns true if packets are loaded, false otherwise
+local function has_packets_in_buffer()
+    local file_path = get_currently_open_capture_file()
+    return file_path ~= nil
+end
+
+-- Export displayed packets via a tap listener to a temporary pcapng
+-- Respects the current display filter. Works in menu callback context.
+-- Returns temp file path on success, or nil on failure
+local function export_displayed_packets_via_tap()
+    -- Build temp path
+    local temp_dir = get_temp_dir()
+    local temp_filename = get_timestamp_filename() .. ".pcapng"
+    local temp_path = is_windows() and (temp_dir .. "\\" .. temp_filename) or (temp_dir .. "/" .. temp_filename)
+
+    -- Get current display filter (optional)
+    local filter = ""
+    if get_filter then
+        local ok, f = pcall(get_filter)
+        if ok and f then filter = tostring(f) end
+    end
+
+    -- Create dumper (pcapng if supported)
+    local ok_dumper, dumper = pcall(function()
+        if wtap_pcapng_file_type_subtype then
+            return Dumper.new(temp_path, wtap_pcapng_file_type_subtype())
+        else
+            return Dumper.new(temp_path)
+        end
+    end)
+    if not ok_dumper or not dumper then
+        return nil
+    end
+
+    local count = 0
+    -- Create a tap on the current packet set
+    local ok_tap, tap_or_err = pcall(function()
+        if filter and filter ~= "" then
+            return Listener.new("frame", filter)
+        else
+            return Listener.new("frame")
+        end
+    end)
+    if not ok_tap or not tap_or_err then
+        pcall(function() dumper:close() end)
+        return nil
+    end
+    local tap = tap_or_err
+
+    function tap.packet(pinfo, tvb)
+        -- Dump currently dissected packet
+        dumper:dump_current()
+        count = count + 1
+    end
+
+    function tap.draw()
+        -- Close dumper when retap completes
+        pcall(function() dumper:close() end)
+    end
+
+    -- Run taps over displayed packets
+    if retap_packets then
+        retap_packets()
+    else
+        -- Older Wireshark fallback
+        if redissect_packets then redissect_packets() end
+    end
+
+    -- Remove tap to avoid leaks
+    pcall(function() tap:remove() end)
+
+    if count > 0 then
+        -- Verify file exists
+        local f = io.open(temp_path, "r")
+        if f then f:close() return temp_path end
+    end
+    -- Clean up on failure
+    pcall(function() os.remove(temp_path) end)
+    return nil
 end
 
 -- Function to show file dialog (platform-specific)
@@ -234,15 +386,23 @@ end
 -- mode: "all_payload", "cleartext_payload", or "payload_and_addresses"
 local function sanitize_capture(mode)
     local file_path = nil
+    local is_temp_file = false
     
-    -- Try to get file path from CaptureInfo (may not be available in menu context)
-    if CaptureInfo and CaptureInfo.file then
-        file_path = tostring(CaptureInfo.file)
-    end
-    
-    -- If no file path from CaptureInfo, use platform-specific file dialog
-    if not file_path or file_path == "" then
-        file_path = show_file_dialog()
+-- Step 1: Try to export displayed packets via tap (respects filter)
+local tmp_from_tap = export_displayed_packets_via_tap()
+if tmp_from_tap then
+    file_path = tmp_from_tap
+    is_temp_file = true
+end
+
+-- Step 2: If tap export failed, try to get the currently open capture file
+if not file_path then
+    file_path = get_currently_open_capture_file()
+end
+
+-- Step 3: If still no file, show dialog
+if not file_path or file_path == "" or file_path == "__WIRESHARK_BUFFER__" or file_path == "__PACKETS_LOADED__" then
+    file_path = show_file_dialog()
         
         -- If file dialog was cancelled or failed, show instructions
         if not file_path or file_path == "" then
@@ -551,10 +711,19 @@ local function sanitize_capture(mode)
         elseif mode == "payload_and_addresses" then
             mode_description = "Payloads and IP/MAC Addresses"
         end
+        
+        -- Build success message with packet detection info
         local success_msg = "Success! Sanitization complete.\n\n" ..
-            "Mode: " .. mode_description .. "\n" ..
-            "Original file: " .. file_path .. "\n" ..
-            "Sanitized file: " .. output_file .. "\n\n" ..
+            "Mode: " .. mode_description .. "\n"
+        
+        -- Add info about packet detection
+        if is_temp_file then
+            success_msg = success_msg .. "Source: Packets from buffer (" .. get_timestamp_filename() .. ".pcapng)\n"
+        else
+            success_msg = success_msg .. "Source: " .. file_path .. "\n"
+        end
+        
+        success_msg = success_msg .. "Output: " .. output_file .. "\n\n" ..
             "The sanitized file has been created and can be safely shared.\n\n" ..
             "Click 'Open File' below to load it in Wireshark, or close this window."
         

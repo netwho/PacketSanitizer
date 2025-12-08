@@ -1,6 +1,6 @@
 # PacketSanitizer
 
-![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-GPL%20v2-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 ![Python](https://img.shields.io/badge/python-3.6%2B-blue.svg)
@@ -442,7 +442,7 @@ PacketSanitizer/
 ├── INSTALL.md             # Detailed installation guide
 ├── CONTRIBUTING.md         # Contribution guidelines
 ├── LICENSE                 # GPL v2 license
-├── VERSION                 # Version file (0.1.1)
+├── VERSION                 # Version file (0.2.0)
 ├── examples/               # Screenshots directory
 │   ├── README.md          # Screenshot documentation
 │   ├── Sanitize.png       # Main menu screenshot
