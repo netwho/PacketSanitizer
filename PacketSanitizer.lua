@@ -17,7 +17,7 @@ local plugin_version = "0.2.0"
 if set_plugin_info then
     set_plugin_info({
         version = plugin_version,
-        author = "PacketSanitizer Contributors",
+        author = "Walter Hofstetter",
         description = "Sanitize PCAP/PCAPNG files for safe sharing - anonymizes IPs, MACs, and sanitizes payloads"
     })
 end
