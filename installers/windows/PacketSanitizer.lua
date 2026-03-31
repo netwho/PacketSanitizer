@@ -61,6 +61,19 @@ end
 -- Helper function to get temp directory (platform-specific)
 local function get_temp_dir()
     if is_windows() then
+        -- os.getenv("TEMP") may return an 8.3 short path (e.g. C:\Users\WALTER~1\...)
+        -- which causes failures in PowerShell and Python. Expand to the full long path.
+        local handle = io.popen('powershell -NoProfile -Command "(Get-Item -LiteralPath $env:TEMP).FullName" 2>nul')
+        if handle then
+            local result = handle:read("*a")
+            handle:close()
+            if result and result ~= "" then
+                result = result:gsub("\r\n", ""):gsub("\n", ""):gsub("\r", "")
+                if result:match("^[A-Za-z]:") then
+                    return result
+                end
+            end
+        end
         return os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
     else
         return os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
@@ -514,79 +527,8 @@ if not file_path or file_path == "" or file_path == "__WIRESHARK_BUFFER__" or fi
     local python_cmd = nil
     
     if is_windows() then
-        -- Windows: Try 'where python' or 'where python3'
-        local python_test = io.popen('where python 2>nul')
-        if python_test then
-            local python_path = python_test:read("*a")
-            python_test:close()
-            if python_path and python_path ~= "" then
-                python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                -- Verify it can import scapy
-                local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
-                if scapy_test then
-                    local scapy_result = scapy_test:read("*a")
-                    scapy_test:close()
-                    if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
-                        python_cmd = python_path
-                    end
-                end
-            end
-        end
-        
-        -- Try python3 on Windows
-        if not python_cmd then
-            python_test = io.popen('where python3 2>nul')
-            if python_test then
-                local python_path = python_test:read("*a")
-                python_test:close()
-                if python_path and python_path ~= "" then
-                    python_path = python_path:gsub("\n", ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    local scapy_test = io.popen('"' .. python_path .. '" -c "import scapy" 2>&1')
-                    if scapy_test then
-                        local scapy_result = scapy_test:read("*a")
-                        scapy_test:close()
-                        if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
-                            python_cmd = python_path
-                        end
-                    end
-                end
-            end
-        end
-        
-        -- Try common Windows Python locations
-        if not python_cmd then
-            local common_paths = {
-                os.getenv("LOCALAPPDATA") .. "\\Programs\\Python\\Python3*\\python.exe",
-                os.getenv("ProgramFiles") .. "\\Python3*\\python.exe",
-                "C:\\Python3*\\python.exe",
-                "C:\\Python*\\python.exe"
-            }
-            for _, path_pattern in ipairs(common_paths) do
-                -- Note: Lua doesn't support glob, so we check specific versions
-                for version = 12, 6, -1 do
-                    local path = path_pattern:gsub("%*", tostring(version))
-                    local test_file = io.open(path, "r")
-                    if test_file then
-                        test_file:close()
-                        local scapy_test = io.popen('"' .. path .. '" -c "import scapy" 2>&1')
-                        if scapy_test then
-                            local scapy_result = scapy_test:read("*a")
-                            scapy_test:close()
-                            if not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError") then
-                                python_cmd = path
-                                break
-                            end
-                        end
-                    end
-                end
-                if python_cmd then break end
-            end
-        end
-        
-        -- Fallback to python on Windows
-        if not python_cmd then
-            python_cmd = "python"
-        end
+        -- Windows: use whatever python is on the PATH
+        python_cmd = "python"
     else
         -- Unix-like (macOS/Linux): Try 'which python3'
         local python_test = io.popen('which python3 2>/dev/null')
