@@ -17,7 +17,7 @@ local plugin_version = "0.2.0"
 if set_plugin_info then
     set_plugin_info({
         version = plugin_version,
-        author = "PacketSanitizer Contributors",
+        author = "Walter Hofstetter",
         description = "Sanitize PCAP/PCAPNG files for safe sharing - anonymizes IPs, MACs, and sanitizes payloads"
     })
 end
@@ -643,37 +643,44 @@ if not file_path or file_path == "" or file_path == "__WIRESHARK_BUFFER__" or fi
     local exit_code = nil
     
     if is_windows() then
-        -- Windows: Create a temporary batch file to avoid command parsing issues
+        -- Windows: Use a PowerShell script instead of a batch file.
+        -- Batch files misparse paths containing 8.3 short names (e.g. WALTER~1)
+        -- because cmd.exe treats ~N as a parameter substitution operator.
+        -- PowerShell handles all Windows path forms correctly.
         local tmp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
-        local tmp_bat = tmp_dir .. "\\packetsanitizer_" .. os.time() .. ".bat"
-        
-        -- Create batch file content
-        local bat_content = string.format('@echo off\n"%s" "%s" %s "%s" "%s" 2>&1\n', 
-            python_cmd:gsub('"', '""'),  -- Escape quotes in Python path
-            python_script:gsub('"', '""'),  -- Escape quotes in script path
-            mode,
-            file_path:gsub('"', '""'),  -- Escape quotes in file paths
-            output_file:gsub('"', '""'))
-        
-        -- Write batch file
-        local bat_file = io.open(tmp_bat, "w")
-        if bat_file then
-            bat_file:write(bat_content)
-            bat_file:close()
-            
-            -- Execute batch file
-            command = '"' .. tmp_bat .. '"'
+        local tmp_ps1 = tmp_dir .. "\\packetsanitizer_" .. os.time() .. ".ps1"
+
+        -- Escape single quotes for PowerShell single-quoted strings (no variable expansion)
+        local function ps_escape(s)
+            return s:gsub("'", "''")
+        end
+
+        -- Build PowerShell script; 2>&1 merges stderr into the output stream
+        local ps_content = string.format(
+            "& '%s' '%s' '%s' '%s' '%s' 2>&1\n",
+            ps_escape(python_cmd),
+            ps_escape(python_script),
+            ps_escape(mode),
+            ps_escape(file_path),
+            ps_escape(output_file)
+        )
+
+        local ps_file = io.open(tmp_ps1, "w")
+        if ps_file then
+            ps_file:write(ps_content)
+            ps_file:close()
+
+            command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. tmp_ps1 .. '"'
             local handle = io.popen(command)
             if handle then
                 output = handle:read("*a")
                 exit_code = handle:close()
             end
-            
-            -- Clean up batch file
-            os.remove(tmp_bat)
+
+            os.remove(tmp_ps1)
         else
-            -- Fallback: Try direct command if batch file creation fails
-            command = string.format('"%s" "%s" %s "%s" "%s"', 
+            -- Fallback: direct command if script file creation fails
+            command = string.format('"%s" "%s" %s "%s" "%s"',
                 python_cmd, python_script, mode, file_path, output_file)
             local handle = io.popen(command .. ' 2>&1')
             if handle then
