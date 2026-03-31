@@ -1,4 +1,4 @@
-# PacketSanitizer - Windows Installation Script
+﻿﻿# PacketSanitizer - Windows Installation Script
 # Installs the PacketSanitizer plugin with prerequisite checks
 # Run with: powershell -ExecutionPolicy Bypass -File install.ps1
 
@@ -19,10 +19,10 @@ function Write-ColorOutput($ForegroundColor) {
     $host.UI.RawUI.ForegroundColor = $fc
 }
 
-function Write-Success { Write-ColorOutput Green "✓ $args" }
-function Write-Warning { Write-ColorOutput Yellow "⚠ $args" }
-function Write-Error { Write-ColorOutput Red "✗ $args" }
-function Write-Info { Write-ColorOutput Cyan "→ $args" }
+function Write-Success { Write-ColorOutput Green "[OK] $args" }
+function Write-Warning { Write-ColorOutput Yellow "[WARN] $args" }
+function Write-Error { Write-ColorOutput Red "[FAIL] $args" }
+function Write-Info { Write-ColorOutput Cyan "[>>] $args" }
 function Write-Header { Write-ColorOutput Blue $args }
 
 Write-Header "============================================"
@@ -339,21 +339,21 @@ Write-Header "============================================"
 Write-Output ""
 Write-Header "Next steps:"
 Write-Output "  1. Restart Wireshark"
-Write-Output "  2. Go to: Tools → PacketSanitizer"
+Write-Output "  2. Go to: Tools > PacketSanitizer"
 Write-Output "  3. Choose a sanitization mode:"
-Write-Output "     • Sanitize All Payload"
-Write-Output "     • Sanitize Clear Text Payload"
-Write-Output "     • Sanitize Payload and IP & MAC Addresses"
+Write-Output "     - Sanitize All Payload"
+Write-Output "     - Sanitize Clear Text Payload"
+Write-Output "     - Sanitize Payload and IP & MAC Addresses"
 Write-Output ""
 Write-Header "Plugin location:"
 Write-Output "  $pluginDir\"
 Write-Output ""
 Write-Header "Files installed:"
-Write-Output "  • PacketSanitizer.lua"
-Write-Output "  • sanitize_packets.py"
+Write-Output "  - PacketSanitizer.lua"
+Write-Output "  - sanitize_packets.py"
 Write-Output ""
 Write-Header "Documentation:"
-Write-Output "  • README.md - Full user guide"
-Write-Output "  • INSTALL.md - Detailed installation guide"
+Write-Output "  - README.md - Full user guide"
+Write-Output "  - INSTALL.md - Detailed installation guide"
 Write-Output ""
 
