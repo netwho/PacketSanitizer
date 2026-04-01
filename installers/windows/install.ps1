@@ -1,6 +1,6 @@
-﻿﻿# PacketSanitizer - Windows Installation Script
+# PacketSanitizer - Windows Installation Script
 # Installs the PacketSanitizer plugin with prerequisite checks
-# Run with: powershell -ExecutionPolicy Bypass -File install.ps1
+# Run with: install.bat   OR   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 
 # Enable strict mode
 Set-StrictMode -Version Latest
@@ -24,6 +24,42 @@ function Write-Warning { Write-ColorOutput Yellow "[WARN] $args" }
 function Write-Error { Write-ColorOutput Red "[FAIL] $args" }
 function Write-Info { Write-ColorOutput Cyan "[>>] $args" }
 function Write-Header { Write-ColorOutput Blue $args }
+
+function Get-PythonOutputLines {
+    param($Output)
+    if ($null -eq $Output) { return @() }
+    @($Output | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { "$_" }
+    })
+}
+
+function Test-PythonExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $PythonExe,
+        [Parameter(Mandatory = $true)]
+        [string] $Code
+    )
+    $null = & $PythonExe -c $Code 2>&1
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-PythonVersionTuple {
+    param([string] $VersionText)
+    if ("$VersionText" -match "Python (\d+)\.(\d+)") {
+        return @{ Major = [int]$Matches[1]; Minor = [int]$Matches[2] }
+    }
+    return $null
+}
+
+function Test-Python36Plus {
+    param([string] $PythonExe)
+    $verOut = & $PythonExe --version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $t = Get-PythonVersionTuple "$verOut"
+    if (-not $t) { return $false }
+    return ($t.Major -gt 3 -or ($t.Major -eq 3 -and $t.Minor -ge 6))
+}
 
 Write-Header "============================================"
 Write-Header "PacketSanitizer - Windows Installation"
@@ -81,81 +117,83 @@ if (-not $wiresharkFound) {
     $prereqFailed = $true
 }
 
-# Check for Python 3
+# Check for Python 3 (PATH, py launcher, then common install locations)
 Write-Info "Checking for Python 3..."
 $pythonFound = $false
 $pythonPath = $null
 
-# Try python command
-try {
-    $pythonVersion = python --version 2>&1
-    if ($pythonVersion -match "Python (\d+)\.(\d+)") {
-        $major = [int]$matches[1]
-        $minor = [int]$matches[2]
-        if ($major -ge 3 -and $minor -ge 6) {
-            $pythonPath = (Get-Command python).Source
-            Write-Success "Python 3 found (version: $($matches[1]).$($matches[2]))"
-            $pythonFound = $true
-        } else {
-            Write-Error "Python 3.6+ required (found $($matches[1]).$($matches[2]))"
-            $prereqFailed = $true
-        }
+foreach ($cmdName in @('python', 'python3')) {
+    $cmd = Get-Command $cmdName -ErrorAction SilentlyContinue
+    if (-not $cmd) { continue }
+    if (Test-Python36Plus -PythonExe $cmd.Source) {
+        $verOut = & $cmd.Source --version 2>&1
+        $t = Get-PythonVersionTuple "$verOut"
+        $pythonPath = $cmd.Source
+        Write-Success "Python 3 found (version: $($t.Major).$($t.Minor))"
+        $pythonFound = $true
+        break
     }
-} catch {
-    # Python not in PATH, try python3
-    try {
-        $pythonVersion = python3 --version 2>&1
-        if ($pythonVersion -match "Python (\d+)\.(\d+)") {
-            $major = [int]$matches[1]
-            $minor = [int]$matches[2]
-            if ($major -ge 3 -and $minor -ge 6) {
-                $pythonPath = (Get-Command python3).Source
-                Write-Success "Python 3 found (version: $($matches[1]).$($matches[2]))"
+}
+
+if (-not $pythonFound) {
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        $pyOut = & $pyLauncher.Source -3 -c "import sys; print(sys.executable)" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $line = (Get-PythonOutputLines $pyOut | Where-Object { $_ -match '^[A-Za-z]:\\' } | Select-Object -First 1)
+            if (-not $line) {
+                $line = "$(Get-PythonOutputLines $pyOut | Select-Object -Last 1)".Trim()
+            }
+            if ($line -and (Test-Path -LiteralPath $line) -and (Test-Python36Plus -PythonExe $line)) {
+                $verOut = & $line --version 2>&1
+                $t = Get-PythonVersionTuple "$verOut"
+                $pythonPath = $line
+                Write-Success "Python 3 found via py launcher (version: $($t.Major).$($t.Minor)) at $pythonPath"
                 $pythonFound = $true
-            } else {
-                Write-Error "Python 3.6+ required (found $($matches[1]).$($matches[2]))"
-                $prereqFailed = $true
             }
-        }
-    } catch {
-        # Check common Python locations
-        $pythonPaths = @(
-            "${env:LOCALAPPDATA}\Programs\Python\Python*\python.exe",
-            "${env:ProgramFiles}\Python*\python.exe",
-            "C:\Python*\python.exe"
-        )
-        
-        foreach ($pathPattern in $pythonPaths) {
-            $foundPaths = Get-ChildItem -Path $pathPattern -ErrorAction SilentlyContinue | Sort-Object -Descending
-            if ($foundPaths) {
-                foreach ($path in $foundPaths) {
-                    try {
-                        $version = & $path.FullName --version 2>&1
-                        if ($version -match "Python (\d+)\.(\d+)") {
-                            $major = [int]$matches[1]
-                            $minor = [int]$matches[2]
-                            if ($major -ge 3 -and $minor -ge 6) {
-                                $pythonPath = $path.FullName
-                                Write-Success "Python 3 found (version: $($matches[1]).$($matches[2])) at $pythonPath"
-                                $pythonFound = $true
-                                break
-                            }
-                        }
-                    } catch {
-                        continue
-                    }
-                }
-                if ($pythonFound) { break }
-            }
-        }
-        
-        if (-not $pythonFound) {
-            Write-Error "Python 3 not found"
-            Write-Output "   Install from: https://www.python.org/downloads/"
-            Write-Output "   Or via Microsoft Store: python"
-            $prereqFailed = $true
         }
     }
+}
+
+if (-not $pythonFound) {
+    $pythonPaths = @(
+        "${env:LOCALAPPDATA}\Programs\Python\Python*\python.exe",
+        "${env:ProgramFiles}\Python310\python.exe",
+        "${env:ProgramFiles}\Python311\python.exe",
+        "${env:ProgramFiles}\Python312\python.exe",
+        "${env:ProgramFiles}\Python313\python.exe",
+        "${env:ProgramFiles}\Python314\python.exe",
+        "${env:ProgramFiles}\Python*\python.exe",
+        "${env:ProgramFiles(x86)}\Python*\python.exe",
+        "C:\Python310\python.exe",
+        "C:\Python311\python.exe",
+        "C:\Python312\python.exe",
+        "C:\Python313\python.exe",
+        "C:\Python314\python.exe",
+        "C:\Python*\python.exe"
+    )
+
+    foreach ($pathPattern in $pythonPaths) {
+        $foundPaths = @(Get-ChildItem -Path $pathPattern -ErrorAction SilentlyContinue | Sort-Object { $_.FullName } -Descending)
+        foreach ($path in $foundPaths) {
+            if (Test-Python36Plus -PythonExe $path.FullName) {
+                $verOut = & $path.FullName --version 2>&1
+                $t = Get-PythonVersionTuple "$verOut"
+                $pythonPath = $path.FullName
+                Write-Success "Python 3 found (version: $($t.Major).$($t.Minor)) at $pythonPath"
+                $pythonFound = $true
+                break
+            }
+        }
+        if ($pythonFound) { break }
+    }
+}
+
+if (-not $pythonFound) {
+    Write-Error "Python 3 not found (3.6+ required, on PATH or in a common install folder)"
+    Write-Output "   Install from: https://www.python.org/downloads/"
+    Write-Output "   Or via Microsoft Store / Python launcher (py)"
+    $prereqFailed = $true
 }
 
 # Check for pip
@@ -187,32 +225,28 @@ if ($pythonPath) {
 Write-Info "Checking for Scapy library..."
 $scapyFound = $false
 if ($pythonPath) {
-    try {
-        $scapyTest = & $pythonPath -c "import scapy; print(scapy.__version__)" 2>&1
-        if ($scapyTest -notmatch "ModuleNotFoundError" -and $scapyTest -notmatch "ImportError") {
-            if ($scapyTest -match "^\d+\.\d+") {
-                Write-Success "Scapy found (version: $($scapyTest.Trim()))"
-            } else {
-                Write-Success "Scapy found"
-            }
-            $scapyFound = $true
+    $scapyTest = & $pythonPath -c "import scapy; print(scapy.__version__)" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $lines = Get-PythonOutputLines $scapyTest
+        $verLine = ($lines | Where-Object { $_ -match '^\d+\.\d+' } | Select-Object -First 1)
+        if ($verLine) {
+            Write-Success "Scapy found (version: $verLine)"
+        } else {
+            Write-Success "Scapy found"
         }
-    } catch {
-        # Scapy not found
+        $scapyFound = $true
     }
 } else {
-    try {
-        $scapyTest = python -c "import scapy; print(scapy.__version__)" 2>&1
-        if ($scapyTest -notmatch "ModuleNotFoundError" -and $scapyTest -notmatch "ImportError") {
-            if ($scapyTest -match "^\d+\.\d+") {
-                Write-Success "Scapy found (version: $($scapyTest.Trim()))"
-            } else {
-                Write-Success "Scapy found"
-            }
-            $scapyFound = $true
+    $scapyTest = python -c "import scapy; print(scapy.__version__)" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $lines = Get-PythonOutputLines $scapyTest
+        $verLine = ($lines | Where-Object { $_ -match '^\d+\.\d+' } | Select-Object -First 1)
+        if ($verLine) {
+            Write-Success "Scapy found (version: $verLine)"
+        } else {
+            Write-Success "Scapy found"
         }
-    } catch {
-        # Scapy not found
+        $scapyFound = $true
     }
 }
 
@@ -304,30 +338,20 @@ Write-Header "Verifying installation..."
 Write-Output ""
 
 if ($pythonPath) {
-    try {
-        $scapyTest = & $pythonPath -c "import scapy" 2>&1
-        if ($scapyTest -notmatch "ModuleNotFoundError" -and $scapyTest -notmatch "ImportError") {
-            Write-Success "Scapy import test passed"
-        } else {
-            Write-Warning "Scapy import test failed"
-            Write-Output "   The plugin may not work correctly."
-            Write-Output "   Try: & '$pythonPath' -m pip install scapy"
-        }
-    } catch {
-        Write-Warning "Could not verify Scapy import"
+    if (Test-PythonExitCode -PythonExe $pythonPath -Code "import scapy") {
+        Write-Success "Scapy import test passed"
+    } else {
+        Write-Warning "Scapy import test failed"
+        Write-Output "   The plugin may not work correctly."
+        Write-Output "   Try: & '$pythonPath' -m pip install scapy"
     }
 } else {
-    try {
-        $scapyTest = python -c "import scapy" 2>&1
-        if ($scapyTest -notmatch "ModuleNotFoundError" -and $scapyTest -notmatch "ImportError") {
-            Write-Success "Scapy import test passed"
-        } else {
-            Write-Warning "Scapy import test failed"
-            Write-Output "   The plugin may not work correctly."
-            Write-Output "   Try: pip install scapy"
-        }
-    } catch {
-        Write-Warning "Could not verify Scapy import"
+    if (Test-PythonExitCode -PythonExe "python" -Code "import scapy") {
+        Write-Success "Scapy import test passed"
+    } else {
+        Write-Warning "Scapy import test failed"
+        Write-Output "   The plugin may not work correctly."
+        Write-Output "   Try: pip install scapy"
     }
 }
 

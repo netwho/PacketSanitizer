@@ -395,6 +395,68 @@ local function show_file_dialog()
     return file_path
 end
 
+-- True if this Python executable can import scapy (stderr merged into read output)
+local function python_scapy_import_ok(python_exe)
+    local q = python_exe:gsub('"', '""')
+    local scapy_test = io.popen('"' .. q .. '" -c "import scapy" 2>&1')
+    if not scapy_test then return false end
+    local scapy_result = scapy_test:read("*a")
+    scapy_test:close()
+    if not scapy_result or scapy_result == "" then return true end
+    return not scapy_result:match("ModuleNotFoundError") and not scapy_result:match("ImportError")
+end
+
+-- Windows: PATH + py launcher + same glob patterns as install.ps1; first interpreter that imports scapy.
+local function find_windows_python_with_scapy()
+    local tmp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
+    local tmp_ps1 = tmp_dir .. "\\packetsanitizer_findpy_" .. os.time() .. ".ps1"
+    local ps1 = io.open(tmp_ps1, "w")
+    if not ps1 then return nil end
+    ps1:write([=[
+$out = New-Object System.Collections.Generic.List[string]
+foreach ($n in 'python','python3') {
+  $c = Get-Command $n -ErrorAction SilentlyContinue
+  if ($null -ne $c) { [void]$out.Add($c.Source) }
+}
+$pyCmd = Get-Command py -ErrorAction SilentlyContinue
+if ($null -ne $pyCmd) {
+  $raw = & $pyCmd.Source -3 -c "import sys; print(sys.executable)" 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    $cand = @($raw | ForEach-Object { "$_" } | Where-Object { $_ -match '^[A-Za-z]:\\' } | Select-Object -First 1)
+    if (-not $cand) { $cand = @("$raw".Trim()) }
+    foreach ($p in $cand) {
+      if ($p -and (Test-Path -LiteralPath $p)) { [void]$out.Add($p); break }
+    }
+  }
+}
+foreach ($pat in @(
+  "$env:LOCALAPPDATA\Programs\Python\Python*\python.exe",
+  "$env:ProgramFiles\Python*\python.exe",
+  "${env:ProgramFiles(x86)}\Python*\python.exe",
+  "C:\Python*\python.exe"
+)) {
+  Get-ChildItem -Path $pat -ErrorAction SilentlyContinue | ForEach-Object { [void]$out.Add($_.FullName) }
+}
+$out | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+]=])
+    ps1:close()
+    local candidates = {}
+    local cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. tmp_ps1 .. '" 2>nul'
+    local h = io.popen(cmd)
+    if h then
+        for line in h:lines() do
+            line = line:gsub("^%s+", ""):gsub("%s+$", "")
+            if line ~= "" then table.insert(candidates, line) end
+        end
+        h:close()
+    end
+    pcall(function() os.remove(tmp_ps1) end)
+    for _, cand in ipairs(candidates) do
+        if python_scapy_import_ok(cand) then return cand end
+    end
+    return nil
+end
+
 -- Function to sanitize the current capture file
 -- mode: "all_payload", "cleartext_payload", or "payload_and_addresses"
 local function sanitize_capture(mode)
@@ -527,8 +589,10 @@ if not file_path or file_path == "" or file_path == "__WIRESHARK_BUFFER__" or fi
     local python_cmd = nil
     
     if is_windows() then
-        -- Windows: use whatever python is on the PATH
-        python_cmd = "python"
+        python_cmd = find_windows_python_with_scapy()
+        if not python_cmd then
+            python_cmd = "python"
+        end
     else
         -- Unix-like (macOS/Linux): Try 'which python3'
         local python_test = io.popen('which python3 2>/dev/null')
