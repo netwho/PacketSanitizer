@@ -1,5 +1,7 @@
 # PacketSanitizer
 
+> **⚠️ Disclaimer:** We strongly suggest checking out the native C-based plugin at **[https://github.com/netwho/PacketSanitizerPro](https://github.com/netwho/PacketSanitizerPro)** for future development. Due to prerequisites and performance considerations, active development will be moving there.
+
 ![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-GPL%20v2-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
